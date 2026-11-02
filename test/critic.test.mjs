@@ -42,7 +42,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const args = process.argv.slice(2);
 const mode = process.env.FAKE_MODE || 'ok';
-const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(ANTHROPIC_|OPENAI_|CODEX_|CLAUDE|AWS_|AZURE_|ACME_|ENABLE_)/i.test(k)));
+const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(ANTHROPIC_|OPENAI_|CODEX_|CLAUDE|AWS_|AZURE_|ACME_|ENABLE_|MCP_)/i.test(k)));
 const record = (extra) => fs.appendFileSync(process.env.FAKE_CAPTURE, JSON.stringify({ tool: 'claude', args, cwd: process.cwd(), env, ...extra }) + '\\n');
 if (args[0] === '--version') { record({}); console.log('2.1.312 (Claude Code)'); process.exit(0); }
 if (args[0] === 'auth') {
@@ -128,7 +128,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const args = process.argv.slice(2);
 const mode = process.env.FAKE_MODE || 'ok';
-const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(ANTHROPIC_|OPENAI_|CODEX_|CLAUDE|AWS_|AZURE_|ACME_|ENABLE_)/i.test(k)));
+const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(ANTHROPIC_|OPENAI_|CODEX_|CLAUDE|AWS_|AZURE_|ACME_|ENABLE_|MCP_)/i.test(k)));
 const record = (extra) => fs.appendFileSync(process.env.FAKE_CAPTURE, JSON.stringify({ tool: 'codex', args, cwd: process.cwd(), env, ...extra }) + '\\n');
 if (args[0] === '--version') { record({}); console.log('codex-cli 0.166.0-alpha.5.1'); process.exit(0); }
 if (args[0] === 'login' && args[1] === 'status') {
