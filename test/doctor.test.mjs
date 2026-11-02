@@ -64,7 +64,8 @@ if (args.includes('--input-format')) {
     emit({ type: 'system', subtype: 'init' });
     if (linear === 'real' || linear === 'added' || linear === 'error') {
       emit({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'toolu_1', name: 'mcp__' + server + '__list_teams', input: {} }] } });
-      const permitted = (at('--allowedTools') || '').split(',').includes('mcp__' + server);
+      const tool = 'mcp__' + server + '__list_teams';
+      const permitted = (at('--allowedTools') || '').split(',').some((r) => (r.endsWith('*') ? tool.startsWith(r.slice(0, -1)) : r === tool || r === 'mcp__' + server));
       const failed = linear === 'error' || !permitted;
       emit({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_1', is_error: failed, content: failed ? (permitted ? 'Linear answered 401' : 'Permission denied') : [{ type: 'text', text: TEAMS_TEXT }] }] } });
     }

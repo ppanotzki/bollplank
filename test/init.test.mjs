@@ -68,7 +68,8 @@ if (args.includes('--input-format')) {
     emit({ type: 'system', subtype: 'init' });
     if (linear === 'real' || linear === 'added' || linear === 'error') {
       emit({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'toolu_1', name: 'mcp__' + server + '__list_teams', input: {} }] } });
-      const permitted = (at('--allowedTools') || '').split(',').includes('mcp__' + server);
+      const tool = 'mcp__' + server + '__list_teams';
+      const permitted = (at('--allowedTools') || '').split(',').some((r) => (r.endsWith('*') ? tool.startsWith(r.slice(0, -1)) : r === tool || r === 'mcp__' + server));
       const failed = linear === 'error' || !permitted;
       emit({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_1', is_error: failed, content: failed ? (permitted ? 'Linear answered 401' : 'Permission denied') : [{ type: 'text', text: TEAMS_TEXT }] }] } });
     }
@@ -231,7 +232,7 @@ test('the Claude probe passes on a real tool call through a connector and fails 
   assert.deepEqual(real.teams.map((x) => x.key), ['ACME']);
   assert.deepEqual(real.teams[0].statuses, ['Backlog', 'Draft', 'Ready', 'In Progress', 'Acceptance', 'Done']);
   const probe = b.calls().find((c) => c.args[0] === '-p' && c.prompt);
-  assert.equal(probe.args[probe.args.indexOf('--allowedTools') + 1], 'mcp__claude_ai_Linear');
+  assert.equal(probe.args[probe.args.indexOf('--allowedTools') + 1], 'mcp__claude_ai_Linear__list*,mcp__claude_ai_Linear__get*,mcp__claude_ai_Linear__search*,mcp__claude_ai_Linear__read*');
   assert.equal(probe.args[probe.args.indexOf('--tools') + 1], '');
   assert.ok(probe.args.includes('--no-session-persistence'));
   assert.match(probe.prompt, /Bollplank setup check/);
