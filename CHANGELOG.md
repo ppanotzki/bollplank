@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 (unreleased)
+## 0.2.0 (2026-11-02)
 
 - The critic works the board itself. It reads the issue and its comments with its own client's Linear tools and posts its critique as one comment. A round counts only when it read the issue and its comments, otherwise the call fails with `board-unreachable` and the session is kept for a retry. A client with no Linear server fails with `critic-unavailable` before any model turn. `posted` says whether the comment was saved.
 - The critic gets the Linear tools of its client and nothing else beyond its source folder. Claude Code gets no shell, with every other MCP server and the shell, edit and web tools denied by name, and your user settings loaded with the deny rules winning and every hook switched off. Managed settings that could keep hooks on stop it. Codex keeps its shell inside the read only sandbox, with no network and no approvals, and every other MCP server switched off. Its Linear tools run without an approval request, which only the Linear servers get, so it can post its comment.
