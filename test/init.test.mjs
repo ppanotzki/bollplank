@@ -241,6 +241,14 @@ test('judge passes only on a real Linear tool call and keeps only what the tool 
   assert.match(judge('Acme client', [tool], 'I listed the teams.').detail, /did not reply with the JSON/);
 });
 
+test('judge spells every name as the tool returned it, whatever case the model wrote', () => {
+  const tool = { name: 'mcp__acme_linear__list_teams', ok: true, text: '{"teams":[{"key":"ACME","name":"Acme","states":[{"name":"Acceptance"},{"name":"In Progress"}],"projects":[{"name":"Shop"}]}]}' };
+  const reply = JSON.stringify({ teams: [{ key: 'acme', name: 'ACME', statuses: ['acceptance', 'in progress', 'Acceptance'], projects: ['shop'] }] });
+  const r = judge('Acme client', [tool], reply);
+  assert.equal(r.ok, true, r.detail);
+  assert.deepEqual(r.teams, [{ key: 'ACME', name: 'ACME', statuses: ['Acceptance', 'In Progress'], projects: ['Shop'] }]);
+});
+
 test('the probe allows only Linear tools that list, get, search or read, and fails on a write', () => {
   const tools = [
     'mcp__claude_ai_Linear__list_teams',

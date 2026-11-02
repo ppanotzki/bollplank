@@ -11,7 +11,7 @@ import { sandbox, fakesSkip, bin } from './helpers.mjs';
 const TEAMS = `
 const statuses = (process.env.FAKE_STATUSES || 'Backlog,Draft,Ready,In Progress,Acceptance,Done').split(',');
 const TEAMS_TEXT = JSON.stringify({ teams: [{ id: 't1', key: 'ACME', name: 'Acme', states: statuses.map((name) => ({ name })), projects: [{ name: 'Shop' }, { name: 'Widgets' }] }] });
-const REPLY = JSON.stringify({ teams: [{ key: 'ACME', name: 'Acme', statuses, projects: ['Shop', 'Widgets'] }, { key: 'GLOBEX', name: 'Globex', statuses: ['Todo'], projects: [] }] });
+const REPLY = JSON.stringify({ teams: [{ key: 'ACME', name: 'Acme', statuses: process.env.FAKE_REPLY_LOWER ? statuses.map((s) => s.toLowerCase()) : statuses, projects: ['Shop', 'Widgets'] }, { key: 'GLOBEX', name: 'Globex', statuses: ['Todo'], projects: [] }] });
 `;
 
 // FAKE_LINEAR: none (no Linear tool), real (a real tool call), claimed (a reply with no call),
@@ -259,6 +259,20 @@ test('doctor compares the board names exactly and names Linear\'s spelling when 
   assert.equal(c['board.team.acme'].fix, 'Set board.team in the config to ACME, exactly as Linear spells it.');
   assert.equal(c['board.project.acme.shop'].ok, false);
   assert.equal(c['board.project.acme.shop'].fix, 'Set board.project in the config to Shop, exactly as Linear spells it.');
+});
+
+test('doctor goes by the tool\'s spelling even when the model writes a status in another case', { skip: fakesSkip }, (t) => {
+  const b = box(t);
+  b.install();
+  const file = join(b.s.bollplank, 'config.json');
+  const config = JSON.parse(readFileSync(file, 'utf8'));
+  writeFileSync(file, JSON.stringify({ ...config, board: { ...config.board, statuses: { ...config.board.statuses, acceptance: 'acceptance' } } }));
+  // The tool returns "Acceptance", the model writes "acceptance", and the config says "acceptance".
+  const r = b.doctor(['--json'], { FAKE_REPLY_LOWER: '1' });
+  assert.equal(r.status, 1, r.stdout);
+  const acceptance = byId(r)['board.status.ACME.acceptance'];
+  assert.equal(acceptance.ok, false);
+  assert.equal(acceptance.fix, 'Set board.statuses.acceptance in the config to "Acceptance", exactly as Linear spells it.');
 });
 
 test('doctor shows a Claude probe stopped by a broad Linear allow rule, with its own fix', { skip: fakesSkip }, (t) => {
