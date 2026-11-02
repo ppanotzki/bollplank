@@ -19,12 +19,14 @@ This only runs inside a ticket folder with a run record (`.run.json`), for a pro
 3. **Gates:** force push the rebased branches and wait for every PR check to pass on the new head.
 4. **Ship in order.** Run `bollplank context <project>` and take each changed repo in `project.shipOrder`. Skip repos this ticket did not change. For each one:
    1. `bollplank merge <project> <repo> <pr> --run <ticket folder>`. It refuses while a selected stage is incomplete or a check is not green.
+      - `review-stale`: the PR head is not the change the last approved code round reviewed. A clean rebase keeps the approval, so this means the change itself changed. Run `bollplank run reopen <project> <TICKET> code --reason <text>`, do another critic round on the PR head, and merge again once the stage is complete.
+      - `run-mismatch` or `corrupt`: the run record or ticket folder is not this ticket's, or cannot be read. Stop and report. Never edit the record to get past it.
    2. `bollplank deploy-wait <project> <repo> <merge commit>`. It waits the way the repo's configured deploy kind says, and returns at once for `none`.
-   3. Record the result with `bollplank run deploy <project> <TICKET> <repo> --kind <deploy kind> --ref <job or run> --commit <merge commit> --status <status>`.
-   4. Continue to the next repo only when the deploy succeeded.
+   3. Record the result with `bollplank run deploy <project> <TICKET> <repo> --kind <kind from deploy-wait> --status <status from deploy-wait> --ref <ref from deploy-wait> --commit <merge commit>`.
+   4. Continue to the next repo only when its status is `succeeded`.
 
-   Stop and ask the approver before any step on `project.stopList`, such as a public release. A change that needs a step the config does not describe, such as an infrastructure change, follows the project's own ship procedure inside the turn. Review its preview first, and stop for permission or security changes the brief did not foresee.
-5. **On a failed deploy:** record it, release the turn, keep the ticket in progress, and report what failed with the job or run id. Do not merge the remaining repos.
-6. **Release the turn:** `bollplank turn release <TICKET>`. Release after success, after a recorded failure, or before any wait. **Never release while a started deploy has no known end state.** Wait for it with `bollplank deploy-wait` first.
+   Stop and ask the approver before any step on `project.stopList`, such as a public release. Bollplank has no ship step for infrastructure. A change that needs a step the config does not describe, such as an infrastructure change, follows the project's own ship procedure inside the turn, or is waited for with a `command` deploy. Review its preview first, and stop for permission or security changes the brief did not foresee.
+5. **On a failed deploy,** status `failed`: record it, release the turn, keep the ticket in progress, and report what failed with the job or run id. Do not merge the remaining repos.
+6. **Release the turn:** `bollplank turn release <TICKET>`. Release after success, after a recorded failure, or before any wait. **Never release while a started deploy has no known end state.** A `timeout` status is not an end. Wait for it with `bollplank deploy-wait` again first.
 
 A resumed turn starts again from step 1 and reconciles with the run record. Merges and deploys already recorded are checked, never repeated.

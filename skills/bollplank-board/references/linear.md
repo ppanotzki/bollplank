@@ -10,7 +10,7 @@ Send markdown with real newlines, never escaped `\n`.
 |---|---|---|
 | Read the issue | gets one issue by its key, such as `ACME-1` | Keep its id, team, project, status, created time and Done time. |
 | Read the comments | lists the comments of an issue | Read every page. Order by created time. Keep each comment's id and link. |
-| Create the issue | saves or creates an issue | Team and project from `project.board` in `bollplank context <project>`. Start it in the draft status. |
+| Create the issue | saves or creates an issue | Team and project from the project's entry in `boards` of `bollplank context`, which falls back to the top level `board.team` and `board.project`. Start it in the draft status. |
 | Write the description | saves or updates an issue, given its id | Send the whole description. Then read the issue again and compare the text. |
 | Post a comment | saves or creates a comment on an issue | Then list the comments and find it by id. Its text must match what you sent. Its link is the approval link and the like. |
 | Update a comment | saves a comment, given the comment's id | Used for the one "Ticket ledger" comment on a retry. |

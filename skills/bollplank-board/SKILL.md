@@ -9,8 +9,8 @@ The other Bollplank skills speak of "the issue", "a comment" and "the ready stat
 
 ## Find the board and the project
 
-1. Run `bollplank context` once without a project. Its `board.kind` names the board, and `projects` lists the configured projects.
-2. Pick the project whose `board` (team and project) holds the issue, or the one the session works in. Then run `bollplank context <project>` and use its `board.statuses` and `project.board`.
+1. Run `bollplank context` once without a project. Its `board.kind` names the board, and `boards` maps each configured project to its board `team` and `project`, with the top level defaults filled in.
+2. Pick the project whose `boards` entry matches the issue's team and project, or the one the session works in. Then run `bollplank context <project>` and use its `board.statuses`, `project.board`, and the project's `boards` entry for a team or project that `project.board` leaves out.
 3. Follow `references/<board.kind>.md` for each operation below. Today the only kind is `linear`, in [references/linear.md](references/linear.md).
 
 When the board's tools are missing in this session, stop and say so. Suggest `bollplank doctor`. Never fall back to an API key, a script or a web page.

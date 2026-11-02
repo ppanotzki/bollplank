@@ -24,7 +24,7 @@ For a configuration run, identify a plan by its immutable snapshot path and sha2
    - `{ROUND_NOTE}`: in round 1 "Review the whole subject." Later: "Review what changed since your last round, plus anything you missed. Your earlier rounds and the responses are below."
    - `{BODY}`: the full subject text, then every earlier critique and response on this series, copied from the board. The critic has no board access, so it knows only what is here.
 
-   Leave `{REVIEWER}`, `{MODEL}` and `{WORKFLOW}` as they are. The wrapper fills them. Write the prompt to a file in your scratch space.
+   Leave `{REVIEWER}`, `{MODEL}` and `{WORKFLOW}` as they are. The wrapper fills them, and it writes the Reviewer, Model and Workflow lines of the returned critique itself. Write the prompt to a file in your scratch space.
 5. **Call the critic:**
    ```
    bollplank critic --ticket <TICKET> --subject brief|plan|code --round <n> --prompt-file <file> --critic <choice> --lead claude|codex [--read-dir <folder>]
@@ -33,12 +33,16 @@ For a configuration run, identify a plan by its immutable snapshot path and sha2
 
    In a sandboxed Codex shell, request the supported approved execution outside the sandbox for this subscription CLI call at the first invocation. Keep the configured approval reviewer and never use permission bypass flags. If that request is denied, report it before changing anything. A sandboxed "Not logged in" does not prove the normal sign in is missing.
 
-   The wrapper keeps one critic session per ticket, provider and mode, and removes every API key and provider setting from the critic's environment. Never pass keys, never run the critic with keys in its environment, and never point it at another sign in.
+   The wrapper keeps one critic session per ticket, provider and mode, and removes every API key, provider setting and client session marker from the critic's environment. The critic gets no board, no MCP servers and no connectors, with either client. Never pass keys, never run the critic with keys in its environment, and never point it at another sign in.
 6. **Read the result.**
    - `ok: false` is a failed call. It is never an approval. Tell the approver what failed.
-   - `critic-unavailable`: the chosen critic's client is missing or not signed in. The selected stage waits. Tell the approver, and offer `same` only as their explicit choice. With an approved `Critic:` line, record that choice as a revised brief they approve (bollplank-approve). Nothing switches on its own.
+   - `critic-unavailable`: the chosen critic's client is missing or not signed in, or Codex could not switch off its MCP servers. The selected stage waits. Tell the approver, and offer `same` only as their explicit choice. With an approved `Critic:` line, record that choice as a revised brief they approve (bollplank-approve). Nothing switches on its own.
    - `round-mismatch`: the board and the wrapper disagree about the round. Read the board again and report. Never change the number until it passes.
-   - Quota: say so and wait.
+   - `session-missing`: the client lost the critic's session. Call again with the same round and `--new-session`. The round counts are kept, and the result says `sessionRestarted`.
+   - `critic-busy`: another call for this ticket and critic is running. Wait for it. Never remove the lock folder while a call may be running.
+   - `critic-used-tools`: the client gave the critic a tool, an MCP server or a connector, or the critic used one. The reply was not used. Report it and do not retry until the client's setup is fixed.
+   - `client-error`: the client reported an error. A quota or usage limit arrives this way. Say so and wait.
+   - `exit` with `receivedReview`: a critique arrived before the client failed. It is not a round. Show it to the approver and run the round again.
    - `ok: true` gives the verdict and the text. Post the text unchanged as a comment on the issue and read it back.
 7. **Show the approver a summary:** the verdict, then each point in one line with its severity and likelihood. Do not answer the points here. That is bollplank-address.
 
@@ -46,4 +50,4 @@ For a configuration run, identify a plan by its immutable snapshot path and sha2
 
 - A Revise verdict is a normal answer. Approve with no material points ends the rounds.
 - After round 3 on a brief, suggest a spike or a code review stage instead of more brief rounds.
-- The Model and Workflow lines of a critique come from the wrapper. Never invent either.
+- The Reviewer, Model and Workflow lines of a critique come from the wrapper. The Model line is the model the client reported it ran. Never invent or change any of them.

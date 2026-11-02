@@ -19,9 +19,17 @@ It checks that every script parses, every skill has valid frontmatter with a nam
 
 ## The private name check
 
-The gate searches every tracked file, every commit message and the whole history for a list of private names. The list cannot live in a public repo without publishing it, so it lives outside: in the `BOLLPLANK_PRIVATE_NAMES` repository secret for CI, and in `~/.bollplank/private-names.txt` for maintainers. Without the list the check reports `skipped`, and the gate fails.
+The gate searches the whole history of `HEAD` for a list of private names. It reads every commit message whole, every author and committer name and email, and every change as text, including binary files, files marked `-diff` in `.gitattributes` and the changes of merge commits against each parent. Replace refs, grafts and local diff settings cannot hide history from it.
 
-A pull request from a fork does not get the secret, so its check fails until a maintainer runs it with the list. That is expected. A maintainer runs the gate on your branch before merging. Results name a pattern by its number and never print a name.
+The list cannot live in a public repo without publishing it, so it lives outside: in the `BOLLPLANK_PRIVATE_NAMES` repository secret for CI, and in `~/.bollplank/private-names.txt` for maintainers. One name per line matches anywhere, ignoring case. A line starting with `re:` is a case sensitive regular expression, and a line starting with `#` is a comment.
+
+The check fails, and the gate with it:
+
+- when the list is missing, which reports `skipped`
+- when a pattern is not a valid regular expression, named by its number
+- when the repository is a shallow clone, since part of its history cannot be read. Fetch the full history first.
+
+A pull request from a fork does not get the secret, so its check fails until a maintainer runs it with the list. That is expected. A maintainer runs the gate on your branch before merging. Results name a pattern by its number and never print a name. A hit names its file only when the path itself matches no name, and otherwise says `(path withheld)`.
 
 ## Copy style
 

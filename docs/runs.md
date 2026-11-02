@@ -6,7 +6,7 @@ A ticket run takes an approved brief from plan to shipped with little supervisio
 
 Before anything else, `bollplank-run` checks three things and stops when one fails:
 
-1. The project's `runs` is `true`.
+1. The project's `runs` is `true`. That is the only switch: there is no list of tickets per project for repository runs.
 2. The instruction is the approver's own word for this ticket.
 3. The brief is approved, with its Approval line naming the approver from the config, and has a Cross-model review line.
 
@@ -21,17 +21,17 @@ Bollplank cannot tell who typed a message. The approver is the person at the key
 The default mode, for projects whose work is code in git repos on GitHub.
 
 1. **Start.** The issue moves to in progress and gets a "Run started" comment.
-2. **Ticket folder.** `bollplank ticket create` makes one worktree per repo the brief changes, plus read only checkouts of the repos they validate against. `bollplank run init` writes the run record with the review stages the brief selected.
+2. **Ticket folder.** `bollplank ticket create` makes one worktree per repo the brief changes, plus read only checkouts of the repos they validate against. `bollplank run init` writes the run record with the review stages the brief selected, and with the brief's `Critic:` line as `--critic` when it has one.
 3. **Overlap.** The run reads the other active ticket folders and waits only when another run changes the same behaviour, or when this ticket depends on work that has not shipped.
 4. **Plan.** The plan is committed in `docs/plans/` of a changed repo and recorded with `bollplank run plan`. Plans need no approval.
 5. **Plan review**, when the brief selected `plan` or `both`. The critic reviews the plan commit, the lead addresses each round, and implementation waits until `bollplank run gate ... plan` passes.
 6. **Implement**, with parallel subagents where steps are independent. Changes that other repos or deployed clients depend on only add. Removals wait for a later ticket.
 7. **Review, test and hunt.** A reviewer reads the whole diff against the brief, a tester runs the gates and the brief's acceptance cases, and a bug hunter looks for edge cases.
-8. **Code review**, when the brief selected `code` or `both`, on the diff's head commit. A later change to covered behaviour reopens the stage.
+8. **Code review**, when the brief selected `code` or `both`, on the diff's head commit. A later change to covered behaviour reopens the stage. At merge, `bollplank merge` checks that the PR head carries the approved change by patch id, so a clean rebase keeps the approval and a changed change needs the stage reopened and reviewed again.
 9. **PRs.** One PR per changed repo. The run waits for every check, and rebases a PR that conflicts with its base, since GitHub runs no checks on one.
 10. **Ship.** See below.
 11. **Release note and report**, as comments on the issue.
-12. **Acceptance.** The issue moves to acceptance only when every deploy in the run record succeeded.
+12. **Acceptance.** The issue moves to acceptance only when every deploy recorded in the run record has status `succeeded`.
 
 The approver tests and says "accept ACME-1". `bollplank-accept` adds the release note to the project's "Release notes" document, moves the issue to done, posts the ticket ledger and removes the ticket folder. `bollplank ticket remove` refuses when anything could be lost.
 
@@ -42,14 +42,14 @@ The approver tests and says "accept ACME-1". `bollplank-accept` adds the release
 1. `bollplank turn take` takes the machine's one shipping lock. Another ticket's lock is never removed.
 2. `bollplank ticket refresh` fetches every repo, and each ticket branch is rebased on its latest base branch.
 3. The rebased branches are pushed, and the run waits for the PR checks on the new heads.
-4. For each changed repo in `shipOrder`: `bollplank merge --run`, then `bollplank deploy-wait` on the merge commit, then `bollplank run deploy` to record the result. The next repo ships only after this one's deploy succeeded.
+4. For each changed repo in `shipOrder`: `bollplank merge --run`, then `bollplank deploy-wait` on the merge commit, then `bollplank run deploy` with the `kind`, `status` and `ref` that `deploy-wait` returned. The next repo ships only after this one's deploy has status `succeeded`. A merge refused with `review-stale` reopens the code stage for another round. A step the config does not describe, such as an infrastructure change, follows the project's own ship procedure inside the turn, or is waited for with a `command` deploy.
 5. `bollplank turn release`, never while a started deploy has no known end.
 
 A failed deploy is recorded, the turn is released, the remaining repos are not merged, and the ticket stays in progress.
 
 ### Resuming
 
-"Resume ACME-1", or a stopped run, starts from `bollplank run show`. The run checks the real state of each PR, base branch and deploy, corrects the record where it differs, and continues from the first step not done. Merges and deploys are never repeated.
+"Resume ACME-1", or a stopped run, starts from `bollplank run show`. The run checks the real state of each PR, base branch and deploy, corrects the record where it differs, and continues from the first step not done. Each deploy is looked at with `bollplank deploy-wait --timeout 30`, which only looks for 30 seconds. A `timeout` status there means the deploy has no end yet, so the run waits for it with `deploy-wait` and no `--timeout` before it records anything. Merges and deploys are never repeated.
 
 ## Consulting and configuration runs
 

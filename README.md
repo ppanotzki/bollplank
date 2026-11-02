@@ -67,7 +67,7 @@ Refunds. Partial cancels.
 A payment that arrives after a cancel.
 ```
 
-**The critique**, posted by the lead as a comment, exactly as the critic returned it:
+**The critique**, posted by the lead as a comment, exactly as `bollplank critic` returned it. The critic wrote it, and the command wrote its Reviewer, Model and Workflow lines, the Model line from what the client reported it ran:
 
 ```text
 Critique of brief v1
@@ -136,7 +136,7 @@ For a Mac with Claude Code, Codex or both, signed in with a Claude or ChatGPT su
    git clone https://github.com/ppanotzki/bollplank ~/.bollplank/kit && ~/.bollplank/kit/install.sh
    ```
 
-   The script links `bollplank` into `~/.local/bin` and starts `bollplank init`. If `~/.local/bin` is not on your `PATH`, it prints the line to add to your shell profile.
+   The script links `bollplank` into `~/.local/bin` and starts `bollplank init`. If `~/.local/bin` is not on your `PATH`, it prints the line to add to your shell profile. Until then, run the command as `~/.bollplank/kit/bin/bollplank`. `install.sh --no-init` installs without starting `init`.
 
 2. Answer the questions `init` asks. It finds your clients and their sign in, checks that each client can read Linear, and offers to add Linear's MCP server when one cannot. It asks for the Linear team, project and status names, the approver's name, the copy style and the default critic, and can add a first project. It writes `~/.bollplank/config.json` and links the skills into Claude Code and Codex.
 
@@ -160,11 +160,15 @@ For a Mac with Claude Code, Codex or both, signed in with a Claude or ChatGPT su
 
 ### Why subscriptions only?
 
-Bollplank runs the critic through the Claude Code and Codex command line clients, signed in with your Claude or ChatGPT subscription. It never takes an API key. Before every critic call it removes model keys and provider settings from the critic's environment (`ANTHROPIC_*`, `OPENAI_*`, `CODEX_API_KEY`, `CLAUDE_CODE_USE_*` and a few more), so a key left in your shell cannot send the call to an API account or bill it there. A client signed in with a key, or routed through a cloud provider, is reported and not used. The critic has the same limits and quota as your own sessions.
+Bollplank runs the critic through the Claude Code and Codex command line clients, signed in with your Claude or ChatGPT subscription. It never takes an API key. Before every critic call it removes model keys and provider settings from the critic's environment (`ANTHROPIC_*`, `OPENAI_*`, `CODEX_API_KEY`, `CLAUDE_CODE_USE_*` and a few more), so a key left in your shell cannot send the call to an API account or bill it there. A Codex critic is also pinned to ChatGPT sign in and the OpenAI provider. A client signed in with a key, or routed through a cloud provider, is reported and not used. The critic has the same limits and quota as your own sessions, and a quota limit comes back as a failed call, never as a review.
+
+### What can the critic reach?
+
+Only the prompt, and the one source folder the lead opens for a plan or code review. It gets no board, no MCP servers and no connectors, with either client, and a critic that is given or uses a tool anyway fails the call. A Claude Code critic gets no tools without a source folder and read tools inside it. A Codex critic runs in a read only sandbox, which stops writes but not reads. [SECURITY.md](SECURITY.md) lists the limits.
 
 ### Does Bollplank store credentials?
 
-No. It stores no keys, tokens or passwords and has no sign in of its own. Claude Code, Codex, `gh` and Linear's MCP server keep their own sign ins where they always do. Bollplank asks the clients whether they are signed in (`claude auth status`, `codex login status`). It reads their session files only to count a ticket's tokens for its ledger and to name the model a Codex critic ran. See [SECURITY.md](SECURITY.md).
+No. It stores no keys, tokens or passwords and has no sign in of its own. Claude Code, Codex, `gh` and Linear's MCP server keep their own sign ins where they always do. Bollplank asks the clients whether they are signed in (`claude auth status`, `codex login status`). It reads their session files only to count a ticket's tokens for its ledger, to name the model a Codex critic ran and to check that a critic's session still exists. See [SECURITY.md](SECURITY.md).
 
 <!-- TERMS: confirm wording before publishing -->
 ### Bollplank drives my subscriptions from scripts. What does that mean?

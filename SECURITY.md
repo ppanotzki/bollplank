@@ -9,15 +9,36 @@ Report a vulnerability privately through GitHub's private vulnerability reportin
 - It never asks for, stores or passes an API key, token or password. It has no sign in of its own.
 - It never reads the clients' credential files. It asks Claude Code and Codex whether they are signed in with `claude auth status --json` and `codex login status`, and keeps only whether the sign in is a subscription. Codex's raw status output is not passed on, since a key based status can include part of the key.
 - It never uses a client signed in with an API key or routed through a cloud provider as a critic. It reports that sign in and fails the call.
-- It never lets a critic see your model keys. Every critic call runs with an environment that has lost every variable matching `ANTHROPIC_*`, `OPENAI_*`, `CODEX_API_KEY*`, `CODEX_ACCESS*`, `CLAUDE_CODE_USE_*`, `AWS_BEARER_TOKEN_BEDROCK` and `AZURE_OPENAI*`. Nothing else is removed.
-- It never gives a critic write tools, MCP servers or the board. A Claude Code critic gets read tools only, and a Codex critic runs in a read only sandbox.
+- It never lets a critic or a probe see your model keys. Every critic call, Linear probe and sign in check runs with an environment that has lost every variable whose name starts with `ANTHROPIC_`, `OPENAI_`, `CODEX_API_KEY`, `CODEX_ACCESS`, `CLAUDE_CODE_USE_`, `AWS_BEARER_TOKEN_BEDROCK` or `AZURE_OPENAI`. These are the model keys and the provider routes. It also loses the markers a running Claude Code session leaves for its children, such as `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_SESSION_*` and `CLAUDE_CODE_SIMPLE`, so a critic started inside Claude Code is a fresh process. Names are matched ignoring case, as Windows does. `CLAUDE_CODE_OAUTH_TOKEN` is a subscription sign in and stays. Nothing else is removed.
+
+## How the critic is isolated
+
+The critic gets no board, no MCP servers and no connectors, for either provider.
+
+- **Claude Code** runs with `--strict-mcp-config`, so no configured MCP server loads, with `ENABLE_CLAUDEAI_MCP_SERVERS=false`, so no claude.ai connector loads, and with only the local settings of its neutral folder. Without `--read-dir` it has no tools at all. With `--read-dir` it has only `Read`, `Grep` and `Glob`, allowed inside that folder, with `Bash`, `Edit`, `Write`, `NotebookEdit` and `PowerShell` denied.
+- **Codex** runs in a read only sandbox, signed in with ChatGPT only, with `model_provider` pinned to `openai` so a profile or provider in its config cannot move it onto a key. Each MCP server Codex lists is switched off by name, and the list is read again to confirm. When one cannot be switched off, the critic is not started. Connectors (apps), plugins, browsers, computer use, image generation, sub agents, memories, tool suggestions, hooks and skill installs are switched off, and `web_search` is disabled.
+- **At runtime** the event stream is checked. A critic that is given or uses any other tool, an MCP server or a connector is stopped, and the call fails with `critic-used-tools` without returning its text.
+
+Known limits:
+
+- A critic with a source folder can read every file in that folder that your account can read, such as a `.env` file. Open the narrowest folder the review needs.
+- Codex's read only sandbox stops writes, not reads. A Codex critic can run read only commands, and they can read the whole disk as far as your account can. This is a known limit of the sandbox, and Bollplank does not narrow it.
+
+## The Linear probes
+
+`bollplank init` and `bollplank doctor` start one short headless run per client to check that it can read Linear. The probe passes only when a Linear tool call really happened and returned what the reply claims.
+
+- **Claude Code** gets no built in tools, and only the tools of its Linear servers whose names start with `list`, `get`, `search` or `read` are allowed, by name prefix. Nothing is saved as a session.
+- **Codex** runs ephemeral, in a read only sandbox, signed in with ChatGPT only. Only its prompt tells it to read and change nothing.
+- For both, a probe that called a Linear tool whose name does not list, get, search or read fails, whatever it returned. For Codex that check comes after the call, so it reports a write but cannot prevent one.
 
 ## Scope
 
 These are in scope:
 
 - **Subscription sign ins.** Any way Bollplank could make a client use a key, another account or a provider route instead of the person's own subscription sign in.
-- **The environment scrub.** A key or provider variable that reaches a critic.
+- **The environment scrub.** A key or provider variable that reaches a critic or a probe.
+- **Critic isolation.** A way for a critic to reach the board, an MCP server, a connector, a write tool or a file outside its source folder, beyond the limits above.
 - **Installing.** `install.sh` and `bollplank init` must never replace a file or a link they did not make. They link only where nothing exists, record every link in `~/.bollplank/install.json`, and `uninstall` removes only those.
 - **The private name check.** A way for a listed name to pass the scan, or for the scan to print a name.
 - **Command lines.** A config value or argument that reaches a shell unchecked. `deploy-wait` runs a repo's configured `command` through the shell by design, so that command is as trusted as your config.

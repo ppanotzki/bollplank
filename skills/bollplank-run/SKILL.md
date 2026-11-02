@@ -33,7 +33,7 @@ A stop is a question to the approver, not a failure. Record it with `bollplank r
 ## Steps
 
 1. **Status.** Run `bollplank ledger mark <TICKET>` first. Move the issue to the in progress status. Post a short "Run started" comment with your Model line and the Workflow line from `bollplank version`.
-2. **Ticket folder and record.** Run `bollplank ticket create <project> <TICKET> --slug <slug> --change <repos>`, with the repos the brief changes. Validation repos are added automatically. Then run `bollplank run init <project> <TICKET> --review <value from the brief>`. If the record already exists, this is a resume: go to "Resuming".
+2. **Ticket folder and record.** Run `bollplank ticket create <project> <TICKET> --slug <slug> --change <repos>`, with the repos the brief changes. Validation repos are added automatically. Then run `bollplank run init <project> <TICKET> --review <value from the brief>`, adding `--critic <the brief's Critic line>` when the brief has one. If the record already exists, this is a resume: go to "Resuming".
 3. **Overlap.** Read the other active ticket folders' `.ticket.json` and `.run.json` under `project.tickets`.
    - Additions to shared files, such as locale files, indexes and schema documents, run in parallel.
    - Wait only when another run changes the same behaviour, or when this ticket depends on a change that has not shipped. Say which, and wait.
@@ -56,14 +56,14 @@ A stop is a question to the approver, not a failure. Record it with `bollplank r
 11. **Release note and report.**
     - The release note is a comment titled "Release note", with your Model and Workflow lines, in plain product language. bollplank-accept later copies it into the project's "Release notes" document.
     - The report covers what shipped, deviations from the plan, bugs fixed, bugs found for the approver's decision, Known edge cases, and an acceptance checklist of three to five items.
-12. **Acceptance.** Move the issue to the acceptance status only when every deploy in the run record succeeded. A failed deploy keeps it in progress with a clear report.
+12. **Acceptance.** Move the issue to the acceptance status only when every deploy recorded in `bollplank run show` has status `succeeded`. A failed deploy keeps it in progress with a clear report.
 
 ## Resuming
 
 A stopped run, or the approver saying "resume ACME-1", starts here. Never repeat a merge or a deploy.
 
 1. Run `bollplank ledger mark <TICKET>`, then `bollplank run show <project> <TICKET>`.
-2. Check the real state: each PR (open or merged, with its merge commit), the base branch in each repo, and each deploy by its commit with `bollplank deploy-wait <project> <repo> <commit> --timeout 30`, which only looks for 30 seconds. Leave out `--timeout` to wait for a deploy that is still running.
+2. Check the real state: each PR (open or merged, with its merge commit), the base branch in each repo, and each deploy by its commit with `bollplank deploy-wait <project> <repo> <commit> --timeout 30`, which only looks for 30 seconds. A `timeout` status there means the deploy has no end yet, not that it failed. Wait for it with `deploy-wait` and no `--timeout`, then record that result.
 3. Correct the record where reality differs, then continue from the first step that is not done.
 
 A failed acceptance test returns the ticket to in progress. The same grant covers the fix within the approved scope.

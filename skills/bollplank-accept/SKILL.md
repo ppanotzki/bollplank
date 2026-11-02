@@ -9,7 +9,7 @@ Only the approver accepts, in so many words ("accept", "accepted"). Take their n
 
 ## Steps
 
-1. **Check.** Run `bollplank ledger mark <TICKET>` first, then `bollplank context <project>`. The issue is in the acceptance status, and `bollplank run show <project> <TICKET>` agrees: for a repository run every deploy succeeded, for a consulting or configuration run the record is complete. Otherwise say what is missing.
+1. **Check.** Run `bollplank ledger mark <TICKET>` first, then `bollplank context <project>`. The issue is in the acceptance status, and `bollplank run show <project> <TICKET>` agrees: for a repository run every recorded deploy has status `succeeded`, for a consulting or configuration run the record is complete. Otherwise say what is missing.
    Read the project's AGENTS.md from the latest base branch of the repo that holds it: `git -C <repo> fetch`, then `git -C <repo> show origin/<base branch>:AGENTS.md`. Never from a working tree, which can be behind and miss a line such as a further release note destination.
 2. **Release note.** Make sure the run's "Release note" comment exists. Write it now if the run did not. Then add it to the project's "Release notes" document on the board (see bollplank-board), unless the project's AGENTS.md says release notes stay on the ticket:
    - a new section at the top, headed `## ACME-1 · <ticket title>`
@@ -25,5 +25,5 @@ Only the approver accepts, in so many words ("accept", "accepted"). Take their n
    - Post it as the issue's one "Ticket ledger" comment, with your Model and Workflow lines under its title when the printed text has none. If one exists (a retry), update that comment instead of adding a second.
    - "rollup" from the approver means `bollplank ledger rollup`, shown as it prints.
 6. **Clean up.**
-   - Repository run: `bollplank ticket remove <project> <TICKET>`. It refuses when anything could be lost, such as uncommitted changes or commits after the merged head. Report a refusal to the approver, and never force it.
+   - Repository run: `bollplank ticket remove <project> <TICKET>`. It refuses when anything could be lost: uncommitted or untracked changes, ignored files other than `node_modules`, or commits on the worktree or the ticket branch after the merged head. Report a refusal to the approver. Pass `--force-ignored` only when the approver says the ignored files it lists may be deleted. Nothing else forces a removal.
    - Consulting or configuration run: keep the run folder, as their references say.
