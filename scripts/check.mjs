@@ -4,7 +4,8 @@
 // 2. Every script in bin/, lib/ and scripts/ parses.
 // 3. Every skill has frontmatter, a name equal to its folder that starts with bollplank-, and a description.
 // 4. Every prompt template keeps the placeholders the critique skill and the critic fill.
-// 5. The docs, skills and prompts name no internal ticket, tool or command (lib/docs-check.mjs).
+// 5. The docs, skills, prompts, AGENTS.md and .github/ name no internal ticket, tool or command
+//    (lib/docs-check.mjs).
 // 6. The example config is valid, and the schema parses.
 // 7. The tests in test/ pass. They use synthetic files and fake programs only.
 // 8. The private name check passes on HEAD and its whole history. Skipped is a failure here.

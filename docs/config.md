@@ -19,7 +19,7 @@ Bollplank reads `~/.bollplank/config.json` (or `$BOLLPLANK_HOME/config.json`) on
 | `shipLock` | no | `~/.bollplank/ship.lock` | The shipping lock folder. |
 | `projects` | yes | | One entry per project, by name. |
 
-A status is used only by its exact name. Each state's name comes from the project's own `board.statuses`, then the top level `board.statuses`, then Linear's suggestion. [existing-project.md](existing-project.md) shows a mapping.
+A status is used only by its exact name. Each state's name comes from the project's own `board.statuses`, then the top level `board.statuses`, then Linear's suggestion. A key other than the five states, such as `in_progress`, fails validation, since it would leave the state at its fallback. [existing-project.md](existing-project.md) shows a mapping.
 
 **The critic.** `other` is the client that is not leading. `same` is the lead's own client in a separate session ([same-model.md](same-model.md)). `claude` or `codex` names one, and when it equals the lead the review counts as same provider. A project's `critic.default` wins over the top level one, a brief's approved `Critic:` line wins over both, and `bollplank critic --critic` overrides them for one call. Nothing switches on its own. Nothing is pinned by default, so each client runs its own default model.
 
@@ -36,7 +36,7 @@ A status is used only by its exact name. Each state's name comes from the projec
 | `validatesAgainst` | no | `{}` | For each repo, the repos its changes are checked against, read only. |
 | `shipOrder` | no | the order of `repos` | The merge and deploy order. When given, it lists every repo exactly once. |
 | `critic.default` | no | the top level one | The critic for this project's tickets. |
-| `board.team`, `board.project` | no | the top level ones | The Linear team key and project for this project's issues. |
+| `board.team`, `board.project` | no | the top level ones | The Linear team key and project for this project's issues. When given, each is a name, not empty. |
 | `board.statuses` | no | the top level ones | This project's own status names, for a team whose statuses differ. |
 | `board.teamId`, `board.projectId` | consulting and configuration | | The Linear ids a readback is compared against. |
 | `runs` | no | `false` | Ticket runs are allowed only when `true`. |

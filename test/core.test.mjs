@@ -56,6 +56,18 @@ test('each project has its own statuses: its own names, then the top level ones,
   const p = validate(bad).join('\n');
   assert.match(p, /projects\.globex-portal\.board\.statuses\.ready: must be a name/);
   assert.match(p, /projects\.acme-shop\.board\.statuses: must be an object/);
+  // A typo in a state name is refused, at the top level and in a project, and so is an empty team
+  // or project name.
+  const typo = structuredClone(two);
+  typo.board.statuses.in_progress = 'Doing';
+  typo.projects['globex-portal'].board.statuses.Done = 'Shipped';
+  typo.projects['globex-portal'].board.team = ' ';
+  typo.projects['acme-shop'].board = { project: '' };
+  const q = validate(typo);
+  assert.ok(q.includes('board.statuses.in_progress: not a workflow state, use one of draft, ready, inProgress, acceptance, done'), q.join('\n'));
+  assert.ok(q.some((x) => x.startsWith('projects.globex-portal.board.statuses.Done: not a workflow state')), q.join('\n'));
+  assert.ok(q.includes('projects.globex-portal.board.team: must be a name'), q.join('\n'));
+  assert.ok(q.includes('projects.acme-shop.board.project: must be a name'), q.join('\n'));
   // context gives each project its own mapping, and the top level one without a project.
   const s = sandbox();
   t.after(s.clean);
@@ -180,17 +192,25 @@ test('the docs check fails on a real ticket key and an internal name or command,
   assert.deepEqual(textProblems('Draw-in and raw-data are fine. So is UTF8.', 'docs/a.md'), []);
   const [hit] = textProblems('A long private line that names AB2-3 somewhere in it.', 'docs/a.md');
   assert.equal(hit, 'docs/a.md:1: a ticket key AB2-3');
+  // Standards are not ticket keys, in any case.
+  assert.deepEqual(textProblems('UTF-8, SHA-256, ISO-8601, HTTP-2, RFC-2119, AES-128, CVE-2024-1234, GPT-5, x86-64, sha-1, TLS-1, OAUTH-2, MD-5, CRC-32, ECMA-262, ES-2015, IPV-6 and acme-2.', 'docs/a.md'), []);
+  // A key in lower case or with a non-breaking hyphen or an en dash is still a key.
+  assert.deepEqual(textProblems('Branch globex-7, then GLOBEX\u20118 and GLOBEX\u20139.', 'docs/a.md'), ['docs/a.md:1: a ticket key globex-7', 'docs/a.md:1: a ticket key GLOBEX\u20118', 'docs/a.md:1: a ticket key GLOBEX\u20139']);
+  // The internal name as words, and the internal command with another dash.
+  assert.deepEqual(textProblems('From agent_workflow and the agent workflow kit. Run aw\u2011merge.', 'docs/a.md'), ['docs/a.md:1: an internal name agent_workflow', 'docs/a.md:1: an internal name agent workflow', 'docs/a.md:1: an internal command aw\u2011merge']);
 
   const root = mkdtempSync(join(tmpdir(), 'bollplank-docs-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  for (const d of ['docs/plans', 'skills/bollplank-x', 'prompts', 'lib']) mkdirSync(join(root, d), { recursive: true });
+  for (const d of ['docs/plans', 'skills/bollplank-x', 'prompts', 'lib', '.github/workflows']) mkdirSync(join(root, d), { recursive: true });
   writeFileSync(join(root, 'README.md'), 'Run ACME-1.\n');
   writeFileSync(join(root, 'docs', 'plans', 'GLOBEX-7.md'), 'GLOBEX-7 and aw-run, while the work runs.\n');
   writeFileSync(join(root, 'skills', 'bollplank-x', 'SKILL.md'), 'ok\nUse aw-ticket.\n');
   writeFileSync(join(root, 'prompts', 'critic.md'), 'Read {ISSUE}.\n');
   writeFileSync(join(root, 'lib', 'turn.mjs'), '// reads the aw-turn lock\n');
+  writeFileSync(join(root, 'AGENTS.md'), 'Examples use ACME-1.\nNot globex-4.\n');
+  writeFileSync(join(root, '.github', 'workflows', 'checks.yml'), 'name: agent_workflow checks\n');
   assert.ok(!docsFiles(root).some((f) => f.includes('plans')));
-  assert.deepEqual(docsProblems(root), ['skills/bollplank-x/SKILL.md:2: an internal command aw-ticket']);
+  assert.deepEqual(docsProblems(root), ['AGENTS.md:2: a ticket key globex-4', '.github/workflows/checks.yml:1: an internal name agent_workflow', 'skills/bollplank-x/SKILL.md:2: an internal command aw-ticket']);
   // The shipped docs pass.
   assert.deepEqual(docsProblems(kit), []);
 });

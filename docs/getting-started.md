@@ -6,13 +6,14 @@ This guide takes you from nothing to a first approved ticket, `ACME-1`, on a Mac
 
 - Node 20 or later and git. `xcode-select --install` gives you git.
 - Claude Code and Codex, each signed in with a subscription: `claude auth login` with a Claude account, `codex login` with ChatGPT. With only one of them, the critic is the same model in a separate session (see [same-model.md](same-model.md)).
+- Codex may be only inside the ChatGPT app, with no `codex` command in your terminal. Bollplank finds it there. Doctor's `path.codex` warning then gives the line that puts it on your `PATH`, so the `codex` commands in its fixes run as typed.
 
 ## 1. Linear
 
 1. Sign up at [linear.app](https://linear.app). The free plan is enough.
 2. Use the team Linear made with the workspace, or add one in Settings, Teams. This guide uses a team named Acme with the key `ACME`.
 
-A new team has the statuses Backlog, Todo, In Progress, Done and Canceled. Bollplank also suggests Draft, Ready and Acceptance. You add those in step 4, when init asks.
+A new team has the statuses Backlog, Todo, In Progress, Done and Canceled. Bollplank also suggests Draft, Ready and Acceptance. You add those when init asks for the statuses, in its step 3 (section 4 below).
 
 ## 2. A project folder
 
@@ -28,7 +29,13 @@ mkdir -p ~/Code/acme/acme-shop && git -C ~/Code/acme/acme-shop init
 git clone https://github.com/ppanotzki/bollplank ~/.bollplank/kit && ~/.bollplank/kit/install.sh
 ```
 
-The script links `bollplank` into `~/.local/bin` and starts `bollplank init`. If `~/.local/bin` is not on your `PATH`, it prints the line to add to `~/.zshrc`.
+The script links `bollplank` into `~/.local/bin` and starts `bollplank init`, which section 4 walks through.
+
+On a new Mac `~/.local/bin` is not on your `PATH`, and the skills call `bollplank context` in every session. So when init is done, before section 5:
+
+1. Add the line the script printed, `export PATH="$HOME/.local/bin:$PATH"`, to the file it named, such as `~/.zshrc`.
+2. Open a new terminal.
+3. Run `bollplank version`. It prints the version and the build. If the command is not found, check the line and the file, then open another new terminal.
 
 ## 4. `bollplank init`
 
@@ -62,7 +69,8 @@ Init asks one question at a time. A value in brackets is the default, which Ente
 - Source folder: `~/Code/acme/acme-shop`. Name and tickets folder: Enter, which names the project `acme-shop`.
 - Linear team and project: Enter takes ACME and Acme Shop. Statuses: `board`.
 - GitHub repo: its `owner/name`. Without one yet, type your GitHub user and the folder name, such as `ada/acme-shop`. It matters only for runs.
-- Base branch: Enter. Checks: `checks`. Deploy: `none`. Runs: `n`.
+- Base branch: Enter. Deploy: `none`. Runs: `n`.
+- Checks: Enter takes the check names init read from the repo's pull requests. An empty repo has none yet, so type a placeholder name such as `checks`. Runs stay off in this guide, so nothing uses it for now. Before you turn runs on, set it to a check that really runs on the repo's pull requests.
 
 **Steps 6 and 7** save `~/.bollplank/config.json`, link the skills into Claude Code and Codex, and run `bollplank doctor`. Every required check should say `ok`. Each failure comes with a `Fix:` line.
 

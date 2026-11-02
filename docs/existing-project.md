@@ -38,6 +38,7 @@ Run `bollplank init` again. Every earlier answer is the default, and init asks b
 
 - Step 3 changes the board's team, project and statuses.
 - To change a project, add it again in step 5 with the same name and answer `y` to replace it. Init then asks every question about that project again, with your earlier answers as the defaults, so Enter keeps a setting. Settings init does not ask about, such as `shipOrder` or `cloneNodeModules`, are kept.
+- Init sets up repository projects only. A consulting or configuration project of the same name is kept as it is, unless you answer `y` to replace it with a new repository project. Edit those projects by hand ([runs.md](runs.md#consulting-and-configuration-runs)).
 - For one name, editing `~/.bollplank/config.json` by hand is quicker. Run `bollplank doctor` after.
 
 ## When a name is wrong
@@ -49,4 +50,4 @@ Run `bollplank init` again. Every earlier answer is the default, and init asks b
         Fix: Open Linear, go to Settings, then Teams, then OPS, then Workflow. Under Started, add a status named "Verify". Or set projects.acme-ops.board.statuses.acceptance in the config to a status that exists.
 ```
 
-A name that differs only in case fails with Linear's spelling to put in the config. A missing project fails with `projects.<name>.board.project`, or `board.project` when the name comes from the top level.
+A name that differs only in case fails with Linear's spelling to put in the config. A missing project fails with `projects.<name>.board.project`, or `board.project` when the name comes from the top level. A status a project takes from the top level is fixed in the top level `board.statuses`, unless the project is in another team. Then the fix names the project's own key, so the board's team keeps its names. The top level statuses only warn while no project takes a name from them.

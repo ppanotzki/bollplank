@@ -35,7 +35,7 @@ Any other option exits 2. It never replaces a file or a link that is not its own
    - A project that is missing offers three choices: `other` to pick another, `session` to create it from your own Claude Code or Codex session (init prints the sentence to type), or `linear` to create it in Linear (init prints the steps). After a create, init reads Linear again, up to three times, and stops with `missing-project` if it is still not there.
    - For each of the five workflow states it lists the team's statuses and suggests Linear's name. A missing status is never created. Init shows the steps in Linear's settings and offers to read again, up to three times. A name kept without a match makes `bollplank doctor` fail until it exists.
 4. **You and the critic.** The approver's name, the copy style and the default critic: `other` with both clients, `same` with one. An existing choice stays the default.
-5. **A project,** if you want one. The source folder, which may be a repo itself or hold several. The project's name and tickets folder. Its Linear team and project, defaulting to step 3's, and whether it uses the board's statuses or maps its own, which is the default for another team. Per repo: the GitHub `owner/name`, the base branch, the checks that must pass, and the deploy kind. Last, whether runs are on. For a new project they stay off unless you say yes. When you replace a project with the same name, each of its earlier answers is the default, and the settings init does not ask about are kept.
+5. **A project,** if you want one. The source folder, which may be a repo itself or hold several. The project's name and tickets folder. Its Linear team and project, defaulting to step 3's, and whether it uses the board's statuses or maps its own, which is the default for another team. Per repo: the GitHub `owner/name`, the base branch, the checks that must pass, and the deploy kind. Last, whether runs are on. For a new project they stay off unless you say yes. When you replace a project with the same name, each of its earlier answers is the default, and the settings init does not ask about are kept. Init sets up repository projects only, so a consulting or configuration project of the same name is kept as it is unless you replace it with a new repository project.
 6. **Saving.** Validates the config and writes nothing when it does not validate. An existing config is kept as `config.json.bak`. Links every skill into `~/.claude/skills` and `~/.codex/skills`, leaves alone any path that is not its own link, and removes its links to skills the kit no longer has.
 7. **Doctor.** Runs `bollplank doctor`.
 
@@ -67,6 +67,8 @@ Any other option exits 2. It never replaces a file or a link that is not its own
 | `amplify.<repo>.appId`, `.region`, `.branch`, `.profile` | For `amplify`. The last two are optional. |
 | `runs`, `writeConfig` | true or false. |
 
+An illustration of the keys, not a setup to copy as it is:
+
 ```json
 {
   "team": "ACME",
@@ -85,6 +87,8 @@ Any other option exits 2. It never replaces a file or a link that is not its own
 }
 ```
 
+With an answers file, init never waits for Enter. So `missingProject` set to `session` or `linear` reads Linear up to three times at once, and init stops with `missing-project` unless the project is already there. A scripted setup creates the Linear project first, or names one that exists.
+
 ## `bollplank doctor`
 
 `bollplank doctor [--offline] [--json]` runs these checks, and each failure says what to do:
@@ -93,14 +97,14 @@ Any other option exits 2. It never replaces a file or a link that is not its own
 |---|---|
 | `node` | Node 20 or later. |
 | `workflow` | The Workflow line. A warning when the build is unknown. |
-| `path` | `bollplank` is on your `PATH`. A warning, since the full path works too. |
+| `path` | `bollplank` is on your `PATH`, as an executable file. A warning, since the full path works too. The fix names `fish_add_path` for fish, `~/.bash_profile` for bash on macOS, `~/.bashrc` for bash elsewhere, and `~/.zshrc` otherwise. |
 | `config` | The config validates. |
 | `links` | Every link in `install.json` still points into the kit. |
 | `skills.<client>` | Every kit skill is linked into that client. |
 | `client.<client>`, `version.<client>`, `signin.<client>` | The client is found, its version against the tested one (a warning), and its subscription sign in. Required only when a critic setting needs it. |
-| `path.<client>` | The client is on your `PATH`, not only in its app bundle, so the `claude` and `codex` commands in the fixes run as typed. A warning. |
+| `path.<client>` | The client is on your `PATH`, not only in its app bundle, so the `claude` and `codex` commands in the fixes run as typed. A warning, with a fix like the one for `path`. |
 | `linear.<client>`, `linear` | Each client found reads Linear, since either may lead. |
-| `board.team.<team>`, `board.project.<team>.<project>`, `board.status.<team>.<state>` | Each team, project and status the config names, against that team's read. Each project is checked with its own effective mapping. A wrong name fails with the config key to change, and a name that differs only in case with Linear's spelling. |
+| `board.team.<team>`, `board.project.<team>.<project>`, `board.status.<team>.<state>` | Each team, project and status the config names, against that team's read. Each project is checked with its own effective mapping. A wrong name fails with the config key to change, and a name that differs only in case with Linear's spelling. The top level statuses are required only when a project takes at least one name from them, otherwise a missing one is a warning. |
 | `critic.<client>`, `critic.<client>.same` | One dry run per critic the config uses, with no board tools. |
 | `lock` | The ship lock is free or has a readable holder. |
 

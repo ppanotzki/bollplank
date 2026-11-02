@@ -683,6 +683,33 @@ test('a project set up again keeps every earlier answer, deploy included, when t
   assert.deepEqual(last.shipOrder, ['acme-web']);
 });
 
+test('init keeps a consulting or configuration project of the same name as it is, unless it is replaced', { skip: fakesSkip }, (t) => {
+  const b = box(t);
+  const advice = { mode: 'consulting', source: b.src, tickets: join(b.s.root, 'runs'), repos: {}, board: { team: 'ACME', project: 'Shop', teamId: 'synthetic-team', projectId: 'synthetic-project' }, ticketPrefix: 'ACME', targets: { workspace: { constraint: 'synthetic' } }, runbook: 'docs/runbook.md', verificationChecks: ['brief-acceptance'], runs: true };
+  b.s.config({ approver: { name: 'Ada' }, board: { kind: 'linear', team: 'ACME', project: 'Shop' }, critic: { default: 'other' }, projects: { 'acme-shop': advice } });
+  const kept = b.init(withSource(b, { writeConfig: true }));
+  assert.equal(kept.status, 0, kept.stdout + kept.stderr);
+  assert.match(text(kept), /acme-shop is a consulting project\. Init sets up repository projects only/);
+  assert.match(text(kept), /Kept the project acme-shop as it was/);
+  assert.deepEqual(b.config().projects['acme-shop'], advice);
+  // Replaced, it is a new repository project with none of the consulting settings.
+  const replaced = b.init(withSource(b, { writeConfig: true, replaceProject: true }));
+  assert.equal(replaced.status, 0, replaced.stdout + replaced.stderr);
+  const p = b.config().projects['acme-shop'];
+  assert.equal(p.mode, undefined);
+  assert.deepEqual(Object.keys(p.repos), ['acme-api']);
+  for (const k of ['ticketPrefix', 'targets', 'runbook', 'verificationChecks']) assert.equal(p[k], undefined, k);
+  assert.equal(p.runs, false);
+  // A configuration project, which can have no repos at all, is kept the same way.
+  const ops = { ...advice, mode: 'configuration', allowedTickets: ['ACME-1'] };
+  delete ops.ticketPrefix;
+  b.s.config({ approver: { name: 'Ada' }, board: { kind: 'linear', team: 'ACME', project: 'Shop' }, critic: { default: 'other' }, projects: { 'acme-shop': ops } });
+  const again = b.init(withSource(b, { writeConfig: true }));
+  assert.equal(again.status, 0, again.stdout + again.stderr);
+  assert.match(text(again), /acme-shop is a configuration project/);
+  assert.deepEqual(b.config().projects['acme-shop'], ops);
+});
+
 test('init never writes a config that does not validate', { skip: fakesSkip }, (t) => {
   const b = box(t);
   const r = b.init(withSource(b, { checks: { 'acme-api': [] }, github: { 'acme-api': 'not a slug' } }));
