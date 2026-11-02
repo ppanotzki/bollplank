@@ -63,7 +63,7 @@ A stop is a question to the approver, not a failure. Record it with `bollplank r
 A stopped run, or the approver saying "resume ACME-1", starts here. Never repeat a merge or a deploy.
 
 1. Run `bollplank ledger mark <TICKET>`, then `bollplank run show <project> <TICKET>`.
-2. Check the real state: each PR (open or merged, with its merge commit), the base branch in each repo, and each deploy by its commit with `bollplank deploy-wait <project> <repo> <commit>`.
+2. Check the real state: each PR (open or merged, with its merge commit), the base branch in each repo, and each deploy by its commit with `bollplank deploy-wait <project> <repo> <commit> --timeout 30`, which only looks for 30 seconds. Leave out `--timeout` to wait for a deploy that is still running.
 3. Correct the record where reality differs, then continue from the first step that is not done.
 
 A failed acceptance test returns the ticket to in progress. The same grant covers the fix within the approved scope.

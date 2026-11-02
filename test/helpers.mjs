@@ -2,7 +2,7 @@
 // HOME, BOLLPLANK_HOME, CLAUDE_CONFIG_DIR and CODEX_HOME, and fake executables first on PATH.
 // No test touches a real sign in, a real config or a real remote.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,18 +13,33 @@ export const isWindows = process.platform === 'win32';
 // Fake programs are Node scripts with a shebang, which Windows cannot run from PATH.
 export const fakesSkip = isWindows ? 'fake programs on PATH need a shebang, which Windows does not run' : false;
 
+// PATH for tests: the fakes, then links to only node and git, then the system folders. The person's
+// own tool folders are left out, so a real claude, codex or gh can never be reached from a test.
+function isolatedPath(fakes, tools) {
+  if (isWindows) return [fakes, process.env.PATH].join(delimiter);
+  mkdirSync(tools, { recursive: true });
+  for (const name of ['node', 'git']) {
+    const real = name === 'node' ? process.execPath : execFileSync('git', ['--exec-path'], { encoding: 'utf8' }).trim().replace(/\/libexec\/git-core$/, '/bin/git');
+    try {
+      symlinkSync(existsSync(real) ? real : execFileSync('/usr/bin/which', [name], { encoding: 'utf8' }).trim(), join(tools, name));
+    } catch {}
+  }
+  return [fakes, tools, '/usr/bin', '/bin', '/usr/sbin', '/sbin'].join(delimiter);
+}
+
 export function sandbox() {
   const root = mkdtempSync(join(tmpdir(), 'bollplank-test-'));
-  const dirs = { root, home: join(root, 'home'), bollplank: join(root, 'home', '.bollplank'), claude: join(root, 'home', '.claude'), codex: join(root, 'home', '.codex'), fakes: join(root, 'fakes') };
+  const dirs = { root, home: join(root, 'home'), bollplank: join(root, 'home', '.bollplank'), claude: join(root, 'home', '.claude'), codex: join(root, 'home', '.codex'), fakes: join(root, 'fakes'), apps: join(root, 'Applications') };
   for (const d of Object.values(dirs)) mkdirSync(d, { recursive: true });
   const env = {
     ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(BOLLPLANK_|ANTHROPIC_|OPENAI_|CODEX_|CLAUDE_)/.test(k))),
     HOME: dirs.home,
     USERPROFILE: dirs.home,
     BOLLPLANK_HOME: dirs.bollplank,
+    BOLLPLANK_APPS_DIR: dirs.apps,
     CLAUDE_CONFIG_DIR: dirs.claude,
     CODEX_HOME: dirs.codex,
-    PATH: [dirs.fakes, process.env.PATH].join(delimiter),
+    PATH: isolatedPath(dirs.fakes, join(root, '.path-tools')),
   };
   return {
     ...dirs,

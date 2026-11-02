@@ -55,7 +55,7 @@
             "appId": { "type": "string" },
             "branch": { "type": "string" },
             "region": { "type": "string" },
-            "awsProfile": { "type": "string" },
+            "profile": { "type": "string", "description": "For amplify: the AWS profile, when one is needed." },
             "workflow": { "type": "string", "description": "For github-actions: the workflow name to wait for." }
           }
         }

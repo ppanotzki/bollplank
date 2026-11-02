@@ -27,6 +27,7 @@ Reviewer: {REVIEWER}
 Model: {MODEL}
 Workflow: {WORKFLOW}
 Date: {DATE}
+Round: {ROUND}
 Verdict: Approve or Revise
 
 The subject and its history follow.

@@ -9,7 +9,7 @@ Require the current approved brief and the approver's explicit run instruction. 
 Move to the in progress status only when starting the authorized run. Save the current approved brief and retain its approval comment and the run instruction reference. Initialize with:
 
 ```
-bollplank run init <project> <TICKET> --brief <file> --approval <approval reference> --instruction <instruction reference> --review plan --linear-readback <file>
+bollplank run init <project> <TICKET> --brief <file> --approval <approval reference> --instruction <instruction reference> --review plan --board-readback <file>
 ```
 
 Read the live issue and its approval comment immediately before initialization and write the readback (see bollplank-board). Keep only metadata needed for this ticket. Follow the project rules for permitted work identities and protected records. The helper checks that the readback is no older than 15 minutes, matches the registered identity and the exact brief content. It records the brief version and copies both files to an immutable baseline folder. The lead reads the actual approval on the board, verifies that it covers the current brief version and records its reference. The helper stores this reference without a URL format or substring test. This is a record of the lead's verification, not a separate approval system, and it adds no approvals for each implementation step. A timestamp in a supplied file does not prove live access. This check prevents accidental file mismatches, not fabricated evidence. The helper does not query the board or authenticate approval.
@@ -65,7 +65,7 @@ Read the run record with `bollplank run show` and the live ticket before acting.
 Use the same project, ticket and run folder. This command supports approved brief amendments and corrections to the registered target config. It does not move run storage or change account authentication. Read the current live ticket and relevant approval comment again. Prepare the new approved brief and a fresh readback. Write a short scope comparison establishing what changed and why existing authority covers it, or link the approver's explicit new approval where scope changed.
 
 ```
-bollplank run rebaseline <project> <TICKET> --brief <file> --approval <approval reference> --review plan --linear-readback <file> --reason <reason> --authorization <instruction or decision reference> --scope-evidence <comparison file>
+bollplank run rebaseline <project> <TICKET> --brief <file> --approval <approval reference> --review plan --board-readback <file> --reason <reason> --authorization <instruction or decision reference> --scope-evidence <comparison file>
 ```
 
 The helper preserves prior baseline snapshots, recorded config values, change events and old plan, review and verification references. It records the new baseline and resets the current plan, selected review gate, verification and status to In Progress. Review the effect of previous writes under the new scope, then write and review the new plan and repeat the required final checks. Previously verified writes are not replayed. Reconcile unresolved old attempts using readback or safe supersession.

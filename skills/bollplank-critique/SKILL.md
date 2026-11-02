@@ -16,8 +16,8 @@ For a configuration run, identify a plan by its immutable snapshot path and sha2
    - An approved brief with a `Critic:` line fixes the critic for the ticket. Refuse to run any other, and say that a different critic needs a revised brief approved again.
    - Before approval, use the brief's proposed `Critic:` line. With no line, use `critic.default` from context.
    - `--lead` is this session's own tool, `claude` or `codex`.
-3. **Read the board** (see bollplank-board): the issue and every comment. The round is counted per series and per critic: round 1 when this critic has not reviewed this series yet, otherwise one more than its last round on it. A revised subject continues its series.
-4. **Build the prompt** from `<kit>/prompts/critic.md`, with `kit` from context. Use `critic-same.md` next to it when the critic is `same`. Fill:
+3. **Read the board** (see bollplank-board): the issue and every comment. The round is counted per series and per critic from the critiques on the board, which carry a `Round:` line: round 1 when this critic has not reviewed this series yet, otherwise one more than its last round on it. A revised subject continues its series.
+4. **Build the prompt** from `<kit>/prompts/critic.md`, with `kit` from context. Use `critic-same.md` next to it whenever the critic is the lead's own provider: `same`, or a named provider equal to the lead. The wrapper labels and stores those reviews as same provider. Fill:
    - `{TICKET}`, `{ROUND}`, `{DATE}` as YYYY/MM/DD
    - `{SUBJECT}`: for a brief its version, for a plan its path and commit (or snapshot sha256), for a diff the repos with base and head commits
    - `{SUBJECT_SHORT}`, for example "brief v3" or "implementation plan v2"

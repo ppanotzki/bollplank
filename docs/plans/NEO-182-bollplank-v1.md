@@ -72,7 +72,7 @@ This plan covers how the brief is built. It does not reopen the brief's settled 
 
 ## 5. The board seam
 
-Skills speak of "the issue", "a comment" and "the status Ready". `skills/bollplank-*/references/board-linear.md` maps each operation to the Linear MCP tools the lead has, the status names from config, the "Release notes" document, and the readback the consulting and configuration modes use. A later board adds one reference file and one `board.kind`. Nothing else changes.
+Skills speak of "the issue", "a comment" and "the status Ready". `skills/bollplank-board/SKILL.md`, with `references/linear.md`, maps each operation to the Linear MCP tools the lead has, the status names from config, the "Release notes" document, and the readback the consulting and configuration modes use. A later board adds one reference file and one `board.kind`. Nothing else changes.
 
 ## 6. Setup (brief Phase 3)
 
@@ -98,7 +98,7 @@ Skills speak of "the issue", "a comment" and "the status Ready". `skills/bollpla
   * `amplify` waits for the job that built the commit, with app, branch, region and AWS profile from config, as `aw-deploy-wait` does
   * `github-actions` waits for the named workflow's run on the merge commit through `gh run list --commit`.
 * **`bollplank ledger`** ports `aw-ledger` with `~/.bollplank/ledger`, both markers (`bollplank ledger mark` and `aw-ledger mark`), session folders from the providers, and a "Sessions that used both kits" section listing any session with markers from both.
-* **Skills.** `bollplank-brief`, `-critique`, `-address`, `-approve`, `-run` (with `references/consulting.md`, `references/configuration.md`, `references/board-linear.md`), `-ship` and `-accept`. They carry the kit's rules and templates with the approver, copy style, stop list and statuses from `bollplank context`, the Workflow line from `bollplank version`, and no project names. `-ship` follows the project's `shipOrder` and each repo's deploy kind instead of the kit's fixed order for one project. `-accept` keeps the folder for consulting and configuration runs, as their references already say.
+* **Skills.** `bollplank-brief`, `-critique`, `-address`, `-approve`, `-run` (with `references/consulting.md` and `references/configuration.md`), `-board` (the board seam, with `references/linear.md`), `-ship` and `-accept`. They carry the kit's rules and templates with the approver, copy style, stop list and statuses from `bollplank context`, the Workflow line from `bollplank version`, and no project names. `-ship` follows the project's `shipOrder` and each repo's deploy kind instead of the kit's fixed order for one project. `-accept` keeps the folder for consulting and configuration runs, as their references already say.
 * **Parity list.** `docs/parity.md` maps every part of agent-workflow (8 commands, 7 skills, 3 run modes, the gate) to its Bollplank equivalent and the test that proves it.
 
 ## 8. The gate and tests

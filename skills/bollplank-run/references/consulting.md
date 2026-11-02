@@ -9,7 +9,7 @@ The project's `ticketPrefix` enables its tickets without an individual allowlist
 Use `bollplank run check <project> <TICKET>` for a read only profile check. It creates no run folder and does not prove service permissions. Only after the explicit start instruction, mark the ledger, move the ticket to the in progress status and capture a fresh approved brief and the board readback (see bollplank-board). Initialize with:
 
 ```
-bollplank run init <project> <TICKET> --brief <file> --approval <reference> --instruction <reference> --review none|plan|code|both --linear-readback <file>
+bollplank run init <project> <TICKET> --brief <file> --approval <reference> --instruction <reference> --review none|plan|code|both --board-readback <file>
 ```
 
 The readback requires id, teamId, projectId, observedAt and the exact description. Approval references are evidence of the lead's live verification, not a separate approval system. A `Critic:` line in the brief does not change the Cross-model review check. Initialization preserves existing records on resume. Use one coordinating writer.
