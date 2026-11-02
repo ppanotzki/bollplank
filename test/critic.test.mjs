@@ -447,6 +447,18 @@ test('the Workflow, Reviewer and Model placeholders are filled', { skip: fakesSk
   for (const k of ['{WORKFLOW}', '{REVIEWER}', '{MODEL}']) assert.equal(p.includes(k), false);
 });
 
+test('the posted Model line names the model that ran, whatever the critic wrote', { skip: fakesSkip }, (t) => {
+  const b = box();
+  after(t, b);
+  for (const lead of ['claude', 'codex']) {
+    const r = b.call({ lead, ticket: lead === 'claude' ? 'ACME-1' : 'ACME-2' });
+    assert.equal(r.status, 0);
+    assert.notEqual(r.json.model, 'Unverified');
+    assert.match(r.json.text, new RegExp(`^Model: ${r.json.model.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}, `, 'm'));
+    assert.equal(/^Model: fake$/m.test(r.json.text), false);
+  }
+});
+
 test('the shipped prompts carry every placeholder and forbid posting and editing', () => {
   for (const f of ['critic.md', 'critic-same.md']) {
     const text = readFileSync(new URL(`../prompts/${f}`, import.meta.url), 'utf8');
