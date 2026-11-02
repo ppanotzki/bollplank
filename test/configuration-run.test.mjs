@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { configurationRun } from '../lib/configuration-run.mjs';
 import { sandbox } from './helpers.mjs';
 
@@ -248,7 +248,7 @@ function moveOrphanAside(f, name) {
   const recordPath = join(folder, '.run.json');
   const committed = existsSync(recordPath) ? readFileSync(recordPath, 'utf8') : null;
   const orphan = join(folder, name);
-  if (committed && JSON.parse(committed).baselines.some((b) => b.brief.path.startsWith(orphan + '/') || b.liveEvidence.path.startsWith(orphan + '/'))) throw new Error('referenced baseline cannot be moved');
+  if (committed && JSON.parse(committed).baselines.some((b) => b.brief.path.startsWith(orphan + sep) || b.liveEvidence.path.startsWith(orphan + sep))) throw new Error('referenced baseline cannot be moved');
   const archive = join(folder, 'recovery', name);
   mkdirSync(archive, { recursive: true });
   renameSync(orphan, join(archive, 'snapshot'));
@@ -347,5 +347,5 @@ test('a configuration run record that is not valid JSON is a corrupt failure thr
   const r = s.run(['run', 'show', 'acme-ops', 'ACME-1']);
   assert.equal(r.status, 1, r.stdout);
   assert.equal(r.json.failure, 'corrupt');
-  assert.match(r.json.detail, /ACME-1 run in .*ops-runs\/ACME-1 could not be read/);
+  assert.match(r.json.detail, /ACME-1 run in .*ops-runs[\\/]ACME-1 could not be read/);
 });
