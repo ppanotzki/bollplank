@@ -13,6 +13,8 @@
       "required": ["kind"],
       "properties": {
         "kind": { "const": "linear" },
+        "team": { "type": "string", "description": "The default team for projects that name none." },
+        "project": { "type": "string", "description": "The default board project for projects that name none." },
         "statuses": {
           "type": "object",
           "properties": { "draft": { "type": "string" }, "ready": { "type": "string" }, "inProgress": { "type": "string" }, "acceptance": { "type": "string" }, "done": { "type": "string" } },
