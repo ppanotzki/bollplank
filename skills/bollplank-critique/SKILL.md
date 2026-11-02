@@ -47,7 +47,7 @@ For a configuration run, identify a plan by its immutable snapshot path and sha2
    - `client-error`: the client reported an error. A quota or usage limit arrives this way. Say so and wait.
    - `exit` with `receivedReview`: a critique arrived before the client failed. Show it to the approver. When `counted` is false it is not a round. Unless `posted` is true, run the round again. Otherwise the approver decides.
    - `ok: true` gives the verdict, the text and `posted`. When the critic posted a well formed critique, the text is that comment's body, even when its final reply was empty or malformed. Read the issue's comments again.
-     - When the critique is there, apply `modelCorrection` if the result has one: edit that comment's `Model:` line from `posted` to `reported` with the board's comment update tool. Do nothing more.
+     - When the critique is there and the result has `headerCorrection`, fix the comment before you record a review stage or rely on the round. Each entry names a header `line`, what the comment holds (`posted`, null when the line is missing) and the `expected` value. Edit the comment's header to the expected lines with the board's comment update tool, then read the comment back to confirm. `headerCorrection` covers the Model line that `modelCorrection` names, so apply only `headerCorrection`. If the edit fails, post the returned text unchanged as a new comment, read it back and say in the summary that the lead posted it because the edit failed. Without `headerCorrection`, do nothing more.
      - When it is missing, which happens only when posting failed after the critic read the subject, post the returned text unchanged as a comment, read it back, and say in the summary that the lead posted it.
 7. **Show the approver a summary:** the verdict, then each point in one line with its severity and likelihood. Do not answer the points here. That is bollplank-address.
 
@@ -55,4 +55,4 @@ For a configuration run, identify a plan by its immutable snapshot path and sha2
 
 - A Revise verdict is a normal answer. Approve with no material points ends the rounds.
 - After round 3 on a brief, suggest a spike or a code review stage instead of more brief rounds.
-- The Reviewer, Model and Workflow lines of a critique come from the wrapper. The Model line ends up as the model the client reported it ran, through `modelCorrection` when needed. Never invent or change any of them otherwise.
+- The Reviewer, Model and Workflow lines of a critique come from the wrapper. The Model line ends up as the model the client reported it ran. A posted header that lacks a line or holds a wrong one is fixed through `headerCorrection`. Never invent or change any of them otherwise.

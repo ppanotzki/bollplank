@@ -11,7 +11,7 @@ import { get, other, childEnv, providers } from '../lib/providers/index.mjs';
 
 // The board calls both fakes make for the issue the prompt names on its "Issue:" line, by
 // FAKE_BOARD: ok reads the issue and its comments and posts, uuid does the same by the issue's id,
-// no-read makes no call, read-fails has the issue read fail, no-comments skips the comments,
+// uuid-all reads the issue itself by its id too, as a resumed critic may, no-read makes no call, read-fails has the issue read fail, no-comments skips the comments,
 // other-issue reads ACME-99, post-fails has the post fail, no-post never posts and body-only posts
 // with the key only in the body and a query, never in an argument that identifies the issue.
 // Modes join with +, so read-fails+no-post has the read fail and posts nothing.
@@ -24,9 +24,9 @@ const board = (prompt, text, call) => {
   const how = hows[0];
   const key = has('other-issue') ? 'ACME-99' : (prompt.match(/^Issue: (\\S+)$/m) || [])[1] || 'ACME-1';
   const issue = JSON.stringify({ id: 'uuid-' + key.toLowerCase(), identifier: key, title: 'Acme widgets', description: 'Acme ships widgets.' });
-  const ref = has('uuid') ? 'uuid-' + key.toLowerCase() : key;
+  const ref = has('uuid') || has('uuid-all') ? 'uuid-' + key.toLowerCase() : key;
   if (has('no-read')) return;
-  call('get_issue', { id: key }, issue, has('read-fails') ? 'Linear answered 401' : null);
+  call('get_issue', { id: has('uuid-all') ? ref : key }, issue, has('read-fails') ? 'Linear answered 401' : null);
   if (!has('no-comments')) call('list_comments', { issueId: ref }, JSON.stringify({ comments: [] }), null);
   if (has('body-only')) return call('save_comment', { body: text + '\\n' + key, query: key }, JSON.stringify({ id: 'comment-1' }), null);
   if (!has('no-post')) call('save_comment', { issueId: ref, body: text }, JSON.stringify({ id: 'comment-1' }), has('post-fails') ? 'Linear answered 500' : null);
@@ -682,7 +682,10 @@ test('the critique skill posts the returned text only when the critic\'s comment
   const text = readFileSync(new URL('../skills/bollplank-critique/SKILL.md', import.meta.url), 'utf8');
   assert.match(text, /When it is missing, which happens only when posting failed after the critic read the subject, post the returned text unchanged/);
   assert.match(text, /say in the summary that the lead posted it/);
-  assert.match(text, /apply `modelCorrection`/);
+  assert.match(text, /apply only `headerCorrection`/);
+  assert.match(text, /before you record a review stage or rely on the round/);
+  assert.match(text, /read the comment back to confirm/);
+  assert.match(text, /If the edit fails, post the returned text unchanged as a new comment/);
   assert.match(text, /`board-unreachable`/);
   assert.match(text, /--instruction-file/);
   assert.equal(/[\u2013\u2014;]/.test(text), false, 'the skill has a dash or semicolon');
@@ -892,6 +895,19 @@ for (const critic of ['claude', 'codex']) {
     }
     assert.equal(b.state(`ACME-1.${critic}.json`).rounds.brief, 3);
   });
+
+  test(`${critic}: a resumed round that reads the issue, its comments and posts all by the issue's id counts`, { skip: fakesSkip }, (t) => {
+    const b = box();
+    after(t, b);
+    const first = b.call({ lead });
+    assert.equal(first.status, 0, first.stdout);
+    const r = b.call({ lead, round: 2 }, { FAKE_BOARD: 'uuid-all' });
+    assert.equal(r.status, 0, r.stdout);
+    assert.equal(r.json.sessionId, first.json.sessionId);
+    assert.equal(r.json.posted, true);
+    assert.match(r.json.text, /^Critique of ACME-1/);
+    assert.equal(b.state(`ACME-1.${critic}.json`).rounds.brief, 2);
+  });
 }
 
 test('--instruction-file text reaches the prompt under the approver line, and an empty one leaves nothing', { skip: fakesSkip }, (t) => {
@@ -942,17 +958,48 @@ test('codex: only an MCP call to a kept Linear server is an allowed item', () =>
   for (const type of ['file_change', 'web_search', 'collab_tool_call']) assert.equal(codex.allowedItem({ type }, ['linear']), false, type);
 });
 
-test('the returned text is what the critic posted, with only the Model line corrected', { skip: fakesSkip }, (t) => {
+test('the returned text is what the critic posted, with its header lines corrected', { skip: fakesSkip }, (t) => {
   const b = box({ critic: { providers: { claude: { model: 'claude-acme', effort: 'high' } } } });
   after(t, b);
   const reply = 'Critique of ACME-1 brief v1\nReviewer: Claude Code\nModel: claude-acme, high\nDate: 2026-11-02\nVerdict: Revise\n\nModel: a quoted line in the body stays.';
   const r = b.call({ lead: 'codex' }, { FAKE_TEXT: reply });
   assert.equal(r.status, 0, r.stdout);
+  const workflow = b.reviews().at(-1).prompt.match(/^Workflow: (.*)$/m)[1];
   assert.deepEqual(r.json.modelCorrection, { posted: 'claude-acme, high', reported: 'claude-acme-20261101, high' });
-  assert.equal(r.json.text, reply.replace('Model: claude-acme, high', 'Model: claude-acme-20261101, high'));
-  // A header without a Model line gets one after the first line, and nothing else is added.
+  // The posted header has no Workflow line, so it is named with the wrapper's value and added.
+  assert.deepEqual(r.json.headerCorrection, [
+    { line: 'Model', posted: 'claude-acme, high', expected: 'claude-acme-20261101, high' },
+    { line: 'Workflow', posted: null, expected: workflow },
+  ]);
+  assert.equal(r.json.text, reply.replace('Model: claude-acme, high', `Model: claude-acme-20261101, high\nWorkflow: ${workflow}`));
+  // A header with only the first line and the verdict gets all three lines after the first line.
   const again = b.call({ lead: 'codex', round: 2 }, { FAKE_TEXT: 'Critique of ACME-1 brief v1\nVerdict: Approve' });
-  assert.equal(again.json.text, 'Critique of ACME-1 brief v1\nModel: claude-acme-20261101, high\nVerdict: Approve');
+  assert.equal(again.status, 0, again.stdout);
+  assert.equal(again.json.text, `Critique of ACME-1 brief v1\nReviewer: Claude Code\nModel: claude-acme-20261101, high\nWorkflow: ${workflow}\nVerdict: Approve`);
+  assert.deepEqual(again.json.headerCorrection.map((c) => [c.line, c.posted]), [['Reviewer', null], ['Model', null], ['Workflow', null]]);
+});
+
+test('a wrong Reviewer line is corrected, and a correct header gives no headerCorrection', { skip: fakesSkip }, (t) => {
+  const b = box({ critic: { providers: { claude: { model: 'claude-acme', effort: 'high' } } } });
+  after(t, b);
+  const ok = b.call({ lead: 'codex' }, { FAKE_MODE: 'no-model' });
+  assert.equal(ok.status, 0, ok.stdout);
+  const workflow = b.reviews().at(-1).prompt.match(/^Workflow: (.*)$/m)[1];
+  assert.equal(ok.json.headerCorrection, undefined);
+  assert.equal(ok.json.modelCorrection, undefined);
+  const header = (reviewer, model) => `Critique of ACME-1 brief v1\nReviewer: ${reviewer}\nModel: ${model}\nWorkflow: ${workflow}\nVerdict: Approve\n\nNo material points.`;
+  // The model the client reported is the expected Model line, so a header that names it is correct.
+  const right = b.call({ lead: 'codex', round: 2 }, { FAKE_TEXT: header('Claude Code', 'claude-acme-20261101, high') });
+  assert.equal(right.status, 0, right.stdout);
+  assert.equal(right.json.headerCorrection, undefined);
+  assert.equal(right.json.text, header('Claude Code', 'claude-acme-20261101, high'));
+  const wrong = b.call({ lead: 'codex', round: 3 }, { FAKE_TEXT: header('Codex', 'claude-acme-20261101, high') });
+  assert.equal(wrong.status, 0, wrong.stdout);
+  assert.deepEqual(wrong.json.headerCorrection, [{ line: 'Reviewer', posted: 'Codex', expected: 'Claude Code' }]);
+  assert.equal(wrong.json.text, header('Claude Code', 'claude-acme-20261101, high'));
+  // The round counts all the same, since the critique was posted and read.
+  assert.equal(wrong.json.posted, true);
+  assert.equal(b.state('ACME-1.claude.json').rounds.brief, 3);
 });
 
 test('an unverified model stays Unverified, and a model the client did not report is never corrected', { skip: fakesSkip }, (t) => {
@@ -1110,8 +1157,28 @@ test('board work takes the posted body as the critique and counts only issue arg
     assert.equal(w.posted, false, JSON.stringify(args));
     assert.equal(w.critique, null);
   }
-  // A read whose only mention of the issue is a query does not count as reading it.
-  assert.equal(boardWork([{ ...read, args: { query: 'ACME-1' } }, comments], 'ACME-1').issue, false);
+  // A read whose only mention of the issue is a query, and whose result is another issue, does not count.
+  assert.equal(boardWork([{ ...read, args: { query: 'ACME-1' }, text: '{"id":"uuid-2","identifier":"ACME-2","description":"see ACME-1"}' }, comments], 'ACME-1').issue, false);
+});
+
+test('board work learns the issue id from a read whose result is the issue, and never from another issue', async () => {
+  const { boardWork } = await import('../lib/commands/critic.mjs');
+  // Linear ids are UUIDs, which never look like a key.
+  const [U1, U2, U7] = ['0f6e1c2a-0000-4a7b-9c00-000000000001', '0f6e1c2a-0000-4a7b-9c00-000000000002', '0f6e1c2a-0000-4a7b-9c00-000000000007'];
+  const call = (tool, args, text = '{}') => ({ server: 'linear', tool, args, ok: true, text });
+  const body = 'Critique of ACME-1 brief v1\nVerdict: Approve\n\nNo material points.';
+  const issue = JSON.stringify({ id: U1, identifier: 'acme-1', title: 'Acme widgets' });
+  // Everything by the id: the read counts because its result is ACME-1, and the id is an alias.
+  assert.deepEqual(boardWork([call('get_issue', { id: U1 }, issue), call('list_comments', { issueId: U1 }, '[]'), call('save_comment', { issueId: U1, body })], 'ACME-1'), { issue: true, comments: true, posted: true, critique: body });
+  // The result's own id is an alias too when the read named the issue some other way, as Codex wraps it.
+  const wrapped = JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({ id: U7, identifier: 'ACME-1' }) }] });
+  assert.deepEqual(boardWork([call('get_issue', { issueId: 'https://linear.app/acme/issue/0f6e1c2a-0000-4a7b-9c00-0000000000ff' }, wrapped), call('list_comments', { issueId: 'https://linear.app/acme/issue/0f6e1c2a-0000-4a7b-9c00-0000000000ff' }, '[]'), call('save_comment', { issueId: U7, body })], 'ACME-1'), { issue: true, comments: true, posted: true, critique: body });
+  // A read of another issue by its id never counts, even when its result mentions ACME-1 as text or
+  // as a related issue, and teaches no alias.
+  const other = JSON.stringify({ id: U2, identifier: 'ACME-2', description: 'Follows ACME-1.', parent: { id: U1, identifier: 'ACME-1' } });
+  assert.deepEqual(boardWork([call('get_issue', { id: U2 }, other), call('list_comments', { issueId: U2 }, '[]'), call('list_comments', { issueId: U1 }, '[]'), call('save_comment', { issueId: U2, body })], 'ACME-1'), { issue: false, comments: false, posted: false, critique: null });
+  // A read that asked for another key never counts, whatever it returned.
+  assert.equal(boardWork([call('get_issue', { id: 'ACME-2' }, issue), call('list_comments', { issueId: U1 }, '[]')], 'ACME-1').issue, false);
 });
 
 test('claude: tool ids, server states and whole word Linear names', () => {
@@ -1237,6 +1304,63 @@ test('claude: a settings file with a key route stops the board critic before mcp
   const managed = b.call({ lead: 'codex' });
   assert.equal(managed.json.failure, 'critic-unavailable');
   assert.ok(managed.json.detail.includes('managed-settings.json'));
+});
+
+test('claude: the board critic switches off hooks with --settings and runs with hooks in user settings', { skip: fakesSkip }, (t) => {
+  const b = box();
+  after(t, b);
+  const file = join(b.s.claude, 'settings.json');
+  const hooks = { PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: 'acme-hook' }] }] };
+  writeFileSync(file, JSON.stringify({ hooks }));
+  const r = b.call({ lead: 'codex' });
+  assert.equal(r.status, 0, r.stdout);
+  const args = b.reviews().at(-1).args;
+  assert.equal(args.filter((a) => a === '--settings').length, 1);
+  assert.deepEqual(JSON.parse(argAfter(args, '--settings')), { disableAllHooks: true });
+  // The user's saved settings are never changed.
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { hooks });
+});
+
+test('claude: managed settings that could keep hooks on stop the board critic before any model turn', { skip: fakesSkip }, (t) => {
+  const b = box();
+  after(t, b);
+  const managed = join(b.s.root, 'managed-settings.json');
+  for (const [settings, key] of [
+    [{ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'acme-hook' }] }] } }, 'hooks'],
+    [{ allowManagedHooksOnly: true }, 'allowManagedHooksOnly'],
+    [{ disableAllHooks: false }, 'disableAllHooks set to false'],
+  ]) {
+    writeFileSync(managed, JSON.stringify(settings));
+    const r = b.call({ lead: 'codex' });
+    assert.equal(r.json.failure, 'critic-unavailable', r.stdout);
+    assert.ok(r.json.detail.includes(`${key} in the managed settings ${managed}`), r.json.detail);
+    assert.ok(r.json.fix.includes(managed), r.json.fix);
+    assert.equal(r.json.detail.includes('acme-hook') || r.json.fix.includes('acme-hook'), false, 'no hook command is printed');
+  }
+  assert.deepEqual(b.reviews(), []);
+  assert.equal(b.captures().some((c) => c.tool === 'claude' && c.args[0] === 'mcp'), false);
+  // Managed settings that switch hooks off, or define none, are fine.
+  writeFileSync(managed, JSON.stringify({ disableAllHooks: true, hooks: {} }));
+  assert.equal(b.call({ lead: 'codex' }).status, 0);
+});
+
+test('claude: only the managed settings file is judged for hooks', () => {
+  const s = sandbox();
+  try {
+    const user = join(s.root, 'settings.json');
+    const managed = join(s.root, 'managed-settings.json');
+    const hooks = { hooks: { PreToolUse: [{ hooks: [{ type: 'command', command: 'acme-hook' }] }] }, allowManagedHooksOnly: true, disableAllHooks: false };
+    writeFileSync(user, JSON.stringify(hooks));
+    writeFileSync(managed, '{}');
+    assert.deepEqual(claude.criticSettings([user, managed], null, s.home, managed), { ok: true });
+    writeFileSync(managed, JSON.stringify(hooks));
+    const r = claude.criticSettings([user, managed], null, s.home, managed);
+    assert.equal(r.ok, false);
+    for (const key of ['hooks', 'allowManagedHooksOnly', 'disableAllHooks set to false']) assert.ok(r.detail.includes(`${key} in the managed settings ${managed}`), r.detail);
+    assert.equal(r.detail.includes(user), false);
+  } finally {
+    s.clean();
+  }
 });
 
 test('claude: a Read, Grep or Glob call on a path outside the read folder ends the turn', () => {
