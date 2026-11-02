@@ -40,6 +40,7 @@ export function sandbox() {
     CLAUDE_CONFIG_DIR: dirs.claude,
     // Claude Code's managed settings, so no test reads the real system file.
     BOLLPLANK_CLAUDE_MANAGED_SETTINGS: join(root, 'managed-settings.json'),
+    BOLLPLANK_CLAUDE_MANAGED_PROFILES: '',
     CODEX_HOME: dirs.codex,
     PATH: isolatedPath(dirs.fakes, join(root, '.path-tools')),
   };

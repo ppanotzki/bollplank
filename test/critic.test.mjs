@@ -1386,3 +1386,28 @@ test('the critique skill never posts again after a failed call that posted', () 
   assert.match(text, /do not post another/);
   assert.match(text, /do not change the round number by hand/);
 });
+
+test('claude: a managed policy fragment or a device management profile stops the board critic', { skip: fakesSkip }, (t) => {
+  const b = box();
+  after(t, b);
+  const managed = join(b.s.root, 'managed-settings.json');
+  writeFileSync(managed, '{}');
+  const fragments = join(b.s.root, 'managed-settings.d');
+  mkdirSync(fragments, { recursive: true });
+  const fragment = join(fragments, '10-hooks.json');
+  writeFileSync(fragment, JSON.stringify({ hooks: { PreToolUse: [{ hooks: [{ type: 'command', command: 'acme-hook' }] }] } }));
+  let r = b.call({ lead: 'codex' });
+  assert.equal(r.json.failure, 'critic-unavailable', r.stdout);
+  assert.ok(r.json.detail.includes(`hooks in the managed settings ${fragment}`), r.json.detail);
+  assert.deepEqual(claude.managedFiles(b.s.env), [managed, fragment]);
+  rmSync(fragment);
+  // A profile is not read, so its presence alone stops the critic.
+  const profile = join(b.s.root, 'com.anthropic.claudecode.plist');
+  writeFileSync(profile, 'acme');
+  r = b.call({ lead: 'codex' }, { BOLLPLANK_CLAUDE_MANAGED_PROFILES: profile });
+  assert.equal(r.json.failure, 'critic-unavailable', r.stdout);
+  assert.ok(r.json.detail.includes(`a Claude Code device management profile at ${profile}`), r.json.detail);
+  assert.deepEqual(b.reviews(), []);
+  // Without either, the critic runs.
+  assert.equal(b.call({ lead: 'codex' }).status, 0);
+});
