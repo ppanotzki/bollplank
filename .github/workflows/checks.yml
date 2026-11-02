@@ -1,5 +1,7 @@
 # Bollplank's merge gate. Runs on every PR and always reports, so a missing result means the check
-# did not run. A ticket run never merges without it.
+# did not run. A ticket run never merges without it. The private name check needs the
+# BOLLPLANK_PRIVATE_NAMES secret, which pull requests from forks do not get, so their check fails
+# until a maintainer runs it with the list.
 name: checks
 on:
   pull_request:
@@ -7,12 +9,28 @@ on:
 permissions:
   contents: read
 jobs:
-  checks:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+  gate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [20, 22]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ matrix.node }}
       - run: node scripts/check.mjs
+        env:
+          BOLLPLANK_PRIVATE_NAMES: ${{ secrets.BOLLPLANK_PRIVATE_NAMES }}
+  # The one check name the merge rule expects. It passes only when every gate job passed.
+  checks:
+    needs: gate
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ needs.gate.result }}" = "success"
