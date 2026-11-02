@@ -1,0 +1,50 @@
+{
+  "approver": { "name": "Ada" },
+  "copyStyle": "Plain sentences. No filler.",
+  "board": {
+    "kind": "linear",
+    "statuses": { "draft": "Draft", "ready": "Ready", "inProgress": "In Progress", "acceptance": "Acceptance", "done": "Done" }
+  },
+  "critic": {
+    "default": "other",
+    "providers": { "claude": { "effort": "high" }, "codex": { "effort": "high" } },
+    "same": { "claude": { "effort": "max" } }
+  },
+  "projects": {
+    "acme-shop": {
+      "source": "~/Code/acme",
+      "tickets": "~/Code/acme/Tickets",
+      "repos": {
+        "acme-api": {
+          "github": "acme/acme-api",
+          "checks": ["checks"],
+          "baseBranch": "main",
+          "cloneNodeModules": true,
+          "deploy": { "kind": "github-actions", "workflow": "deploy" }
+        },
+        "acme-web": {
+          "github": "acme/acme-web",
+          "checks": ["checks"],
+          "deploy": { "kind": "command", "command": "./scripts/wait-for-deploy.sh {commit}" }
+        }
+      },
+      "validatesAgainst": { "acme-web": ["acme-api"] },
+      "shipOrder": ["acme-api", "acme-web"],
+      "board": { "team": "ACME", "project": "Shop" },
+      "runs": true,
+      "stopList": ["destructive operations on real content", "anything outside the ticket", "public releases"]
+    },
+    "acme-advice": {
+      "mode": "consulting",
+      "source": "~/Code/acme-advice",
+      "tickets": "~/Code/acme-advice/runs",
+      "repos": {},
+      "board": { "team": "ADV", "project": "Advice", "teamId": "00000000-0000-4000-8000-000000000001", "projectId": "00000000-0000-4000-8000-000000000002" },
+      "ticketPrefix": "ADV",
+      "targets": { "workspace": { "constraint": "Delivery artifacts within the approved ticket scope." } },
+      "runbook": "docs/runbook.md",
+      "verificationChecks": ["brief-acceptance"],
+      "runs": true
+    }
+  }
+}

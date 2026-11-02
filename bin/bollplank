@@ -1,0 +1,29 @@
+#!/usr/bin/env node
+// The one Bollplank command. `bollplank <command> ...` runs lib/commands/<command>.mjs, whose
+// run(argv) prints its result. Commands stop through Exit, so output is flushed before the exit code.
+import { existsSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { kitDir } from '../lib/paths.mjs';
+import { Exit } from '../lib/out.mjs';
+
+const dir = join(kitDir, 'lib', 'commands');
+const commands = readdirSync(dir).filter((f) => f.endsWith('.mjs')).map((f) => f.slice(0, -4)).sort();
+const [name, ...rest] = process.argv.slice(2);
+
+if (!name || name === 'help' || name === '--help' || !existsSync(join(dir, `${name}.mjs`))) {
+  const known = commands.join(', ');
+  process.stdout.write(`usage: bollplank <command> [options]\ncommands: ${known}\n`);
+  process.exitCode = name && !['help', '--help'].includes(name) ? 2 : 0;
+} else {
+  try {
+    const mod = await import(pathToFileURL(join(dir, `${name}.mjs`)).href);
+    await mod.run(rest);
+  } catch (e) {
+    if (e instanceof Exit) process.exitCode = e.code;
+    else {
+      process.stdout.write(JSON.stringify({ ok: false, failure: 'internal', detail: String(e?.stack ?? e) }, null, 2) + '\n');
+      process.exitCode = 1;
+    }
+  }
+}

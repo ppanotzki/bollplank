@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ppanotzki/bollplank/schema/config.schema.json",
+  "title": "Bollplank configuration (~/.bollplank/config.json)",
+  "description": "Documents the shape for editors. lib/config.mjs validate() is what Bollplank enforces.",
+  "type": "object",
+  "required": ["approver", "board", "projects"],
+  "properties": {
+    "approver": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string", "minLength": 1, "description": "The person whose explicit words approve a brief and accept a ticket." } } },
+    "copyStyle": { "type": "string", "description": "How briefs and comments are written." },
+    "board": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "linear" },
+        "statuses": {
+          "type": "object",
+          "properties": { "draft": { "type": "string" }, "ready": { "type": "string" }, "inProgress": { "type": "string" }, "acceptance": { "type": "string" }, "done": { "type": "string" } },
+          "additionalProperties": false
+        }
+      }
+    },
+    "critic": {
+      "type": "object",
+      "properties": {
+        "default": { "enum": ["other", "same", "claude", "codex"] },
+        "providers": { "$ref": "#/$defs/providerSettings" },
+        "same": { "$ref": "#/$defs/providerSettings", "description": "Model and effort for a critic from the same provider as the lead." }
+      }
+    },
+    "shipLock": { "type": "string", "description": "The shipping lock folder. Point it at another kit's lock to share one turn." },
+    "projects": { "type": "object", "additionalProperties": { "$ref": "#/$defs/project" } }
+  },
+  "$defs": {
+    "providerSettings": {
+      "type": "object",
+      "properties": { "claude": { "$ref": "#/$defs/model" }, "codex": { "$ref": "#/$defs/model" } },
+      "additionalProperties": false
+    },
+    "model": { "type": "object", "properties": { "model": { "type": "string" }, "effort": { "type": "string" } } },
+    "repo": {
+      "type": "object",
+      "required": ["github", "checks"],
+      "properties": {
+        "github": { "type": "string", "pattern": "^[\\w.-]+/[\\w.-]+$" },
+        "checks": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "baseBranch": { "type": "string" },
+        "cloneNodeModules": { "type": "boolean" },
+        "deploy": {
+          "type": "object",
+          "required": ["kind"],
+          "properties": {
+            "kind": { "enum": ["none", "command", "amplify", "github-actions"] },
+            "command": { "type": "string", "description": "For command: run with {commit} replaced." },
+            "appId": { "type": "string" },
+            "branch": { "type": "string" },
+            "region": { "type": "string" },
+            "awsProfile": { "type": "string" },
+            "workflow": { "type": "string", "description": "For github-actions: the workflow name to wait for." }
+          }
+        }
+      }
+    },
+    "project": {
+      "type": "object",
+      "required": ["source", "tickets"],
+      "properties": {
+        "mode": { "enum": ["repository", "consulting", "configuration"], "default": "repository" },
+        "source": { "type": "string" },
+        "tickets": { "type": "string" },
+        "repos": { "type": "object", "additionalProperties": { "$ref": "#/$defs/repo" } },
+        "validatesAgainst": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } },
+        "shipOrder": { "type": "array", "items": { "type": "string" } },
+        "board": { "type": "object", "properties": { "team": { "type": "string" }, "project": { "type": "string" }, "teamId": { "type": "string" }, "projectId": { "type": "string" } } },
+        "runs": { "type": "boolean", "default": false },
+        "privateScan": { "type": "boolean", "default": false },
+        "stopList": { "type": "array", "items": { "type": "string" } },
+        "ticketPrefix": { "type": "string", "pattern": "^[A-Z][A-Z0-9]*$" },
+        "allowedTickets": { "type": "array", "items": { "type": "string", "pattern": "^[A-Z]+-\\d+$" } },
+        "targets": { "type": "object" },
+        "runbook": { "type": "string" },
+        "verificationChecks": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "protectedProjects": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}
