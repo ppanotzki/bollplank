@@ -7,6 +7,10 @@ import { delimiter, join } from 'node:path';
 import { sandbox, acmeConfig, fakesSkip } from './helpers.mjs';
 import * as claude from '../lib/providers/claude.mjs';
 import * as codex from '../lib/providers/codex.mjs';
+
+// Claude Code's path rules, such as Read(//dir/**), and these test paths are POSIX paths. Windows is
+// untested beyond CI, so these checks run on macOS and Linux only.
+const posixPathsSkip = process.platform === 'win32' ? 'Claude Code path rules are POSIX paths here, checked on macOS and Linux only' : false;
 import { get, other, childEnv, providers } from '../lib/providers/index.mjs';
 
 // The board calls both fakes make for the issue the prompt names on its "Issue:" line, by
@@ -1246,7 +1250,7 @@ test('codex: a signed out Linear server is switched off while a signed in one wo
   assert.match(out.json.fix, /^Run `codex mcp login linear`/);
 });
 
-test('claude: settings that set a key, a route or reads outside the folder stop the critic before any call', () => {
+test('claude: settings that set a key, a route or reads outside the folder stop the critic before any call', { skip: posixPathsSkip }, () => {
   const s = sandbox();
   try {
     const dir = join(s.root, 'acme src');
@@ -1363,7 +1367,7 @@ test('claude: only the managed settings file is judged for hooks', () => {
   }
 });
 
-test('claude: a Read, Grep or Glob call on a path outside the read folder ends the turn', () => {
+test('claude: a Read, Grep or Glob call on a path outside the read folder ends the turn', { skip: posixPathsSkip }, () => {
   const dir = '/acme/src';
   const allowed = { builtIn: ['Read', 'Grep', 'Glob', 'ToolSearch'], linear: ['linear'], denied: [], readDir: dir, cwd: '/acme/neutral', home: '/home/acme' };
   const use = (name, input) => ({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 't', name, input }] } });
