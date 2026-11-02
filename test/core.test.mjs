@@ -66,6 +66,19 @@ test('each project has its own statuses: its own names, then the top level ones,
   assert.equal(top.boards['acme-shop'].statuses.ready, 'Ready');
   assert.equal(s.run(['context', 'globex-portal']).json.board.statuses.acceptance, 'In Review');
   assert.equal(s.run(['context', 'acme-shop']).json.board.statuses.acceptance, 'Review');
+  // With a project, board names that project's own team and project, the same as boards and
+  // project.board, with the top level ones filled in where it sets none.
+  const globex = s.run(['context', 'globex-portal']).json;
+  assert.deepEqual(globex.board, { kind: 'linear', ...top.boards['globex-portal'] });
+  assert.equal(globex.board.team, 'GLOBEX');
+  assert.equal(globex.board.project, 'Portal');
+  assert.equal(globex.project.board.team, 'GLOBEX');
+  assert.equal(globex.project.board.project, 'Portal');
+  const acme = s.run(['context', 'acme-shop']).json;
+  assert.deepEqual(acme.board, { kind: 'linear', ...top.boards['acme-shop'] });
+  assert.equal(acme.board.team, 'ACME');
+  assert.equal(acme.board.project, null);
+  assert.equal(acme.project.board.team, 'ACME');
 });
 
 test('the board skill creates a project and checks statuses only when asked, confirming first and reading back', () => {

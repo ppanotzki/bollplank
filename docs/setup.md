@@ -35,7 +35,7 @@ Any other option exits 2. It never replaces a file or a link that is not its own
    - A project that is missing offers three choices: `other` to pick another, `session` to create it from your own Claude Code or Codex session (init prints the sentence to type), or `linear` to create it in Linear (init prints the steps). After a create, init reads Linear again, up to three times, and stops with `missing-project` if it is still not there.
    - For each of the five workflow states it lists the team's statuses and suggests Linear's name. A missing status is never created. Init shows the steps in Linear's settings and offers to read again, up to three times. A name kept without a match makes `bollplank doctor` fail until it exists.
 4. **You and the critic.** The approver's name, the copy style and the default critic: `other` with both clients, `same` with one. An existing choice stays the default.
-5. **A project,** if you want one. The source folder, which may be a repo itself or hold several. The project's name and tickets folder. Its Linear team and project, defaulting to step 3's, and whether it uses the board's statuses or maps its own, which is the default for another team. Per repo: the GitHub `owner/name`, the base branch, the checks that must pass, and the deploy kind. Last, whether runs are on. They stay off unless you say yes.
+5. **A project,** if you want one. The source folder, which may be a repo itself or hold several. The project's name and tickets folder. Its Linear team and project, defaulting to step 3's, and whether it uses the board's statuses or maps its own, which is the default for another team. Per repo: the GitHub `owner/name`, the base branch, the checks that must pass, and the deploy kind. Last, whether runs are on. For a new project they stay off unless you say yes. When you replace a project with the same name, each of its earlier answers is the default, and the settings init does not ask about are kept.
 6. **Saving.** Validates the config and writes nothing when it does not validate. An existing config is kept as `config.json.bak`. Links every skill into `~/.claude/skills` and `~/.codex/skills`, leaves alone any path that is not its own link, and removes its links to skills the kit no longer has.
 7. **Doctor.** Runs `bollplank doctor`.
 
@@ -62,7 +62,7 @@ Any other option exits 2. It never replaces a file or a link that is not its own
 | `projects.<name>.mapping` | `board` or `own`. |
 | `projects.<name>.statuses.<state>`, `projects.<name>.recheck.<state>` | As above, for the project's own mapping. |
 | `github.<repo>`, `baseBranch.<repo>`, `checks.<repo>` | `owner/name`, the base branch, and a list of check names. |
-| `deploy.<repo>` | `none`, `command`, `amplify` or `github-actions`. Default `none`. |
+| `deploy.<repo>` | `none`, `command`, `amplify` or `github-actions`. Default the earlier kind, else `none`. |
 | `deployCommand.<repo>`, `deployWorkflow.<repo>` | For `command` and `github-actions`. |
 | `amplify.<repo>.appId`, `.region`, `.branch`, `.profile` | For `amplify`. The last two are optional. |
 | `runs`, `writeConfig` | true or false. |

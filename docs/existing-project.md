@@ -37,7 +37,7 @@ In a mapping you edit by hand, a state you leave out takes the top level `board.
 Run `bollplank init` again. Every earlier answer is the default, and init asks before it saves, keeping the old file as `config.json.bak`.
 
 - Step 3 changes the board's team, project and statuses.
-- To change a project, add it again in step 5 with the same name and answer `y` to replace it. Init then asks every question about that project again.
+- To change a project, add it again in step 5 with the same name and answer `y` to replace it. Init then asks every question about that project again, with your earlier answers as the defaults, so Enter keeps a setting. Settings init does not ask about, such as `shipOrder` or `cloneNodeModules`, are kept.
 - For one name, editing `~/.bollplank/config.json` by hand is quicker. Run `bollplank doctor` after.
 
 ## When a name is wrong

@@ -630,6 +630,59 @@ test('init keeps a backup and rewrites nothing without a yes', { skip: fakesSkip
   assert.deepEqual(b.config().projects['acme-shop'].board, { team: 'ACME', project: 'Shop' });
 });
 
+test('a project set up again keeps every earlier answer, deploy included, when the answers leave them out', { skip: fakesSkip }, (t) => {
+  const b = box(t);
+  // A second repo with no remote, so nothing about it can be detected.
+  const web = join(b.src, 'acme-web');
+  mkdirSync(web);
+  execFileSync('git', ['init', '-q', '-b', 'main', web]);
+  const tickets = join(b.s.root, 'work', 'Tickets');
+  const first = b.init({
+    ...ANSWERS,
+    source: b.src,
+    tickets,
+    repos: ['acme-api', 'acme-web'],
+    github: { 'acme-api': 'acme/acme-core', 'acme-web': 'acme/acme-web' },
+    baseBranch: { 'acme-api': 'release', 'acme-web': 'main' },
+    checks: { 'acme-api': ['build'], 'acme-web': ['build', 'e2e'] },
+    deploy: { 'acme-api': 'amplify', 'acme-web': 'command' },
+    amplify: { 'acme-api': { appId: 'app1', region: 'eu-north-1', branch: 'live', profile: 'acme' } },
+    deployCommand: { 'acme-web': 'acme-wait {commit}' },
+    runs: true,
+  });
+  assert.equal(first.status, 0, first.stdout + first.stderr);
+  // Settings init never asks about, set by hand.
+  const c = b.config();
+  const p = c.projects['acme-shop'];
+  p.shipOrder = ['acme-web', 'acme-api'];
+  p.repos['acme-web'].cloneNodeModules = true;
+  p.stopList = ['anything outside the ticket'];
+  b.s.config(c);
+  const before = structuredClone(b.config().projects['acme-shop']);
+  assert.deepEqual(before.repos['acme-api'].deploy, { kind: 'amplify', appId: 'app1', region: 'eu-north-1', branch: 'live', profile: 'acme' });
+  // The answers name only the source, the project and the replace, so every other answer is the
+  // earlier one.
+  const again = b.init({ approver: 'Ada', addProject: true, source: b.src, projectName: 'acme-shop', replaceProject: true, writeConfig: true });
+  assert.equal(again.status, 0, again.stdout + again.stderr);
+  const after = b.config().projects['acme-shop'];
+  assert.deepEqual(after, before);
+  assert.equal(after.tickets, tickets);
+  assert.equal(after.runs, true);
+  assert.deepEqual(after.repos['acme-web'].deploy, { kind: 'command', command: 'acme-wait {commit}' });
+  assert.equal(after.repos['acme-api'].github, 'acme/acme-core');
+  assert.equal(after.repos['acme-api'].baseBranch, 'release');
+  assert.deepEqual(after.repos['acme-api'].checks, ['build']);
+  assert.equal(after.repos['acme-web'].cloneNodeModules, true);
+  assert.deepEqual(after.shipOrder, ['acme-web', 'acme-api']);
+  // A changed deploy kind takes no settings from the old one, and a dropped repo leaves the order.
+  const changed = b.init({ approver: 'Ada', addProject: true, source: b.src, projectName: 'acme-shop', replaceProject: true, writeConfig: true, repos: ['acme-web'], deploy: { 'acme-web': 'none' } });
+  assert.equal(changed.status, 0, changed.stdout + changed.stderr);
+  const last = b.config().projects['acme-shop'];
+  assert.deepEqual(Object.keys(last.repos), ['acme-web']);
+  assert.deepEqual(last.repos['acme-web'], { github: 'acme/acme-web', checks: ['build', 'e2e'], baseBranch: 'main', deploy: { kind: 'none' }, cloneNodeModules: true });
+  assert.deepEqual(last.shipOrder, ['acme-web']);
+});
+
 test('init never writes a config that does not validate', { skip: fakesSkip }, (t) => {
   const b = box(t);
   const r = b.init(withSource(b, { checks: { 'acme-api': [] }, github: { 'acme-api': 'not a slug' } }));
@@ -784,7 +837,11 @@ test('a missing Linear project is never created by init: it offers the session s
   assert.equal(probes.filter((c) => c.tool === 'claude').length, 4);
   const said = b.s.run(['init', '--answers', join(b.s.root, 'answers-1.json')], b.env).stdout;
   assert.match(said, /Gadgets is not a project of ACME in Linear\. Bollplank never creates one on its own/);
-  assert.match(said, /In your Claude Code or Codex session, type this:\n {2}Create the Linear project Gadgets in team ACME\n/);
+  assert.match(said, /In your Claude Code or Codex session, ask this:\n {2}Create the Linear project Gadgets in team ACME\n/);
+  // No Bollplank skill is linked yet on a first install, so the person checks the call themselves.
+  assert.match(said, /Check that it names the team ACME and the project Gadgets before you approve it\./);
+  assert.match(said, /init reads Linear again\./);
+  assert.doesNotMatch(said, /board skill/);
   assert.equal(said.match(/Still no project named Gadgets in ACME\./g).length, 3);
 });
 

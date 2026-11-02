@@ -27,7 +27,7 @@ Prints the Workflow line every brief and comment carries, such as `Bollplank 0.2
 
 Prints what a skill needs: `workflow`, `kit`, `approver`, `copyStyle`, `board` with its `statuses`, `critic`, `projects` (the names) and `boards`, which maps each project to its Linear `team`, `project` and `statuses`, with the top level defaults filled in.
 
-With a project, `board.statuses` is that project's effective mapping: its own names, then the top level ones, then Linear's suggestion. It adds `project` with `name`, `mode`, `runs`, `stopList`, `board`, `repos`, `shipOrder`, `privateScan`, `critic`, `source` and `tickets`. `project.critic` is `{ "default": ..., "from": "project" }` when the project sets its own, else the top level one with `"from": "config"`.
+With a project, `board.statuses` is that project's effective mapping: its own names, then the top level ones, then Linear's suggestion. `board.team` and `board.project` are the project's own, else the top level ones, so `board` matches the project's `boards` entry. It adds `project` with `name`, `mode`, `runs`, `stopList`, `board`, `repos`, `shipOrder`, `privateScan`, `critic`, `source` and `tickets`. `project.critic` is `{ "default": ..., "from": "project" }` when the project sets its own, else the top level one with `"from": "config"`.
 
 ## The critic
 
