@@ -31,7 +31,7 @@ The default mode, for projects whose work is code in git repos on GitHub.
 9. **PRs.** One PR per changed repo. The run waits for every check, and rebases a PR that conflicts with its base, since GitHub runs no checks on one.
 10. **Ship.** See below.
 11. **Release note and report**, as comments on the issue.
-12. **Acceptance.** The issue moves to acceptance only when `bollplank run check-shipped` passes: every repo the ticket changes is merged and its merge commit deployed with status `succeeded`.
+12. **Acceptance.** The issue moves to acceptance only when `bollplank run check-shipped` passes: every repo the ticket changes is merged and its merge commit deployed with status `succeeded`, by a deploy of the repo's configured kind (`none` for a repo with no deploy). A `merge` or `release` record does not count.
 
 The approver tests and says "accept ACME-1". `bollplank-accept` adds the release note to the project's "Release notes" document, moves the issue to done, posts the ticket ledger and removes the ticket folder. `bollplank ticket remove` refuses when anything could be lost.
 
@@ -42,7 +42,7 @@ The approver tests and says "accept ACME-1". `bollplank-accept` adds the release
 1. `bollplank turn take` takes the machine's one shipping lock. Another ticket's lock is never removed.
 2. `bollplank ticket refresh` fetches every repo, and each ticket branch is rebased on its latest base branch.
 3. The rebased branches are pushed, and the run waits for the PR checks on the new heads.
-4. For each changed repo in `shipOrder`, which lists every repo of the project: `bollplank merge --run`, which merges only the ticket's own PR from the ticket branch, then `bollplank deploy-wait` on the merge commit, then `bollplank run deploy` with the `kind`, `status` and `ref` that `deploy-wait` returned. The next repo ships only after this one's deploy has status `succeeded`. A merge refused with `review-stale` reopens the code stage for another round. A step the config does not describe, such as an infrastructure change, follows the project's own ship procedure inside the turn, or is waited for with a `command` deploy.
+4. For each changed repo in `shipOrder`, which lists every repo of the project: `bollplank merge --run`, which merges only the ticket's own PR from the ticket branch in the configured repo, never a fork, then `bollplank deploy-wait` on the merge commit, then `bollplank run deploy` with the `kind`, `status` and `ref` that `deploy-wait` returned, also for a repo with no deploy. The next repo ships only after this one's deploy has status `succeeded`. A merge refused with `review-stale` reopens the code stage for another round. A step the config does not describe, such as an infrastructure change, follows the project's own ship procedure inside the turn, or is waited for with a `command` deploy.
 5. `bollplank turn release`, never while a started deploy has no known end.
 
 A failed deploy is recorded, the turn is released, the remaining repos are not merged, and the ticket stays in progress.

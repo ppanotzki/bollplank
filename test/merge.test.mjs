@@ -58,7 +58,7 @@ function setup(t, extra = {}) {
     { name: 'checks', status: 'COMPLETED', conclusion: 'SUCCESS' },
     { name: 'lint', status: 'COMPLETED', conclusion: 'SUCCESS' },
   ];
-  const state = (pr = {}, more = {}) => writeFileSync(stateFile, JSON.stringify({ pr: { state: 'OPEN', isDraft: false, baseRefName: 'main', headRefOid: head, headRefName: 'acme-1-feature', statusCheckRollup: green, title: 'Add the feature', body: 'Plain body.', ...pr }, ...more }));
+  const state = (pr = {}, more = {}) => writeFileSync(stateFile, JSON.stringify({ pr: { state: 'OPEN', isDraft: false, baseRefName: 'main', headRefOid: head, headRefName: 'acme-1-feature', headRepository: { id: 'R_acme', name: 'acme-api' }, headRepositoryOwner: { id: 'U_acme', login: 'acme' }, statusCheckRollup: green, title: 'Add the feature', body: 'Plain body.', ...pr }, ...more }));
   state();
   const runFolder = join(s.root, 'tickets', 'ACME-1');
   // The run record and the ticket folder record that ticket create writes.
@@ -211,6 +211,34 @@ test('merge with --run refuses another ticket\'s green PR, with no review stage 
   assert.ok(f.calls().find((a) => a[1] === 'view')[f.calls().find((a) => a[1] === 'view').indexOf('--json') + 1].split(',').includes('headRefName'));
 });
 
+test('merge with --run refuses a green PR from a fork with the ticket branch name, with no review stage selected', { skip: fakesSkip }, (t) => {
+  const f = setup(t);
+  const none = { plan: stage(false, false), code: stage(false, false) };
+  f.runRecord(none);
+  const cases = [
+    [{ headRepositoryOwner: { login: 'globex' } }, /PR #7 is from the repo globex\/acme-api, not acme\/acme-api/],
+    [{ headRepository: { name: 'acme-api-fork' } }, /PR #7 is from the repo acme\/acme-api-fork, not acme\/acme-api/],
+    // A fork that was deleted leaves no head repository.
+    [{ headRepository: null, headRepositoryOwner: null }, /PR #7 is from the repo unknown, not acme\/acme-api/],
+  ];
+  for (const [pr, detail] of cases) {
+    f.state(pr);
+    const r = f.merge('--run', f.runFolder);
+    assert.equal(r.status, 1, r.stdout);
+    assert.equal(r.json.failure, 'run-mismatch');
+    assert.equal(r.json.merged, false);
+    assert.match(r.json.detail, detail);
+    assert.equal(r.json.repository, 'acme/acme-api');
+  }
+  assert.equal(f.merged(), false);
+  // GitHub names ignore case, so the configured repo in another case is the same repo.
+  f.state({ headRepository: { name: 'Acme-API' }, headRepositoryOwner: { login: 'ACME' } });
+  const r = f.merge('--run', f.runFolder);
+  assert.equal(r.status, 0, r.stdout);
+  const fields = f.calls().find((a) => a[1] === 'view');
+  assert.deepEqual(fields[fields.indexOf('--json') + 1].split(',').filter((x) => x.startsWith('headRepository')), ['headRepository', 'headRepositoryOwner']);
+});
+
 test('a code review keeps whitespace: a Python line moved into or out of an if needs a new review, and a clean rebase passes', { skip: fakesSkip }, (t) => {
   const f = setup(t);
   f.api.commit('app.py', 'def total(x):\n    if x:\n        a = 1\n    return x\n');
@@ -308,7 +336,7 @@ test('one ticket reviews and ships two repos, each merged on its own reviewed he
     g('commit', '-q', '-m', 'Add the feature');
     g('push', '-q', 'origin', 'HEAD:refs/heads/acme-1-two', `HEAD:refs/pull/${prs[name]}/head`);
     heads[name] = g('rev-parse', 'HEAD');
-    state.repos[`acme/${name}`] = { state: 'OPEN', isDraft: false, baseRefName: 'main', headRefOid: heads[name], headRefName: 'acme-1-two', statusCheckRollup: [{ name: 'checks', status: 'COMPLETED', conclusion: 'SUCCESS' }], title: 'Add the feature', body: '', mergeOid: (name === 'acme-api' ? 'a' : 'b').repeat(40) };
+    state.repos[`acme/${name}`] = { state: 'OPEN', isDraft: false, baseRefName: 'main', headRefOid: heads[name], headRefName: 'acme-1-two', headRepository: { name }, headRepositoryOwner: { login: 'acme' }, statusCheckRollup: [{ name: 'checks', status: 'COMPLETED', conclusion: 'SUCCESS' }], title: 'Add the feature', body: '', mergeOid: (name === 'acme-api' ? 'a' : 'b').repeat(40) };
   }
   writeFileSync(stateFile, JSON.stringify(state));
   assert.equal(bollplank('run', 'init', 'acme-shop', 'ACME-1', '--review', 'code').status, 0);
@@ -339,7 +367,7 @@ test('one ticket reviews and ships two repos, each merged on its own reviewed he
   r = bollplank('run', 'check-shipped', 'acme-shop', 'ACME-1');
   assert.equal(r.status, 1, r.stdout);
   assert.equal(r.json.failure, 'not-shipped');
-  assert.match(r.json.detail, /acme-api has no deploy recorded for its merge commit a{12}\. acme-web is not merged\./);
+  assert.match(r.json.detail, /acme-api has no none deploy recorded for its merge commit a{12}\. acme-web is not merged\./);
   r = bollplank('merge', 'acme-shop', 'acme-web', '8', '--run', folder);
   assert.equal(r.status, 0, r.stdout);
   assert.equal(r.json.review.approved, heads['acme-web']);
@@ -349,7 +377,7 @@ test('one ticket reviews and ships two repos, each merged on its own reviewed he
   bollplank('run', 'deploy', 'acme-shop', 'ACME-1', 'acme-web', '--kind', 'none', '--status', 'running', '--ref', 'none', '--commit', 'b'.repeat(40));
   r = bollplank('run', 'check-shipped', 'acme-shop', 'ACME-1');
   assert.equal(r.json.failure, 'not-shipped');
-  assert.match(r.json.detail, /^acme-web's last deploy of b{12} is running\.$/);
+  assert.match(r.json.detail, /^acme-web's last none deploy of b{12} is running\.$/);
   assert.equal(r.json.repos['acme-api'].deployed, true);
   bollplank('run', 'deploy', 'acme-shop', 'ACME-1', 'acme-web', '--kind', 'none', '--status', 'succeeded', '--ref', 'none', '--commit', 'b'.repeat(40));
   r = bollplank('run', 'check-shipped', 'acme-shop', 'ACME-1');

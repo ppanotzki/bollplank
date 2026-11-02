@@ -56,7 +56,7 @@ A stop is a question to the approver, not a failure. Record it with `bollplank r
 11. **Release note and report.**
     - The release note is a comment titled "Release note", with your Model and Workflow lines, in plain product language. bollplank-accept later copies it into the project's "Release notes" document.
     - The report covers what shipped, deviations from the plan, bugs fixed, bugs found for the approver's decision, Known edge cases, and an acceptance checklist of three to five items.
-12. **Acceptance.** Move the issue to the acceptance status only when `bollplank run check-shipped <project> <TICKET>` exits 0: every repo the ticket changes is merged and the deploy of its merge commit has status `succeeded`. A `not-shipped` result names what is missing. A failed deploy keeps it in progress with a clear report.
+12. **Acceptance.** Move the issue to the acceptance status only when `bollplank run check-shipped <project> <TICKET>` exits 0: every repo the ticket changes is merged and the deploy of its merge commit, of the repo's configured deploy kind, has status `succeeded`. A `not-shipped` result names what is missing. A failed deploy keeps it in progress with a clear report.
 
 ## Resuming
 

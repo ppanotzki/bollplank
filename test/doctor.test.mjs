@@ -207,6 +207,7 @@ test('doctor fails a missing board status and a client that cannot read Linear, 
   assert.equal(c['board.status.ACME.acceptance'].required, true);
   assert.match(c['board.status.ACME.acceptance'].detail, /ACME has no status named "Acceptance" that Claude Code or Codex can read/);
   assert.match(c['board.status.ACME.acceptance'].fix, /Settings, then Teams, then ACME, then Workflow\. Under Started, add a status named "Acceptance"\. Or set board\.statuses\.acceptance/);
+  assert.doesNotMatch(c['board.status.ACME.acceptance'].detail, /spells it/);
   assert.equal(c['board.status.ACME.done'].ok, true);
   // Codex cannot read Linear while Claude Code can. Either may lead, so it fails.
   r = b.doctor(['--json'], { FAKE_LINEAR_CODEX: 'error' });
@@ -231,6 +232,46 @@ test('doctor fails a missing board status and a client that cannot read Linear, 
   c = byId(b.doctor());
   assert.equal(c['board.team.GLOBEX'].ok, false);
   assert.equal(c['board.status.GLOBEX.done'], undefined);
+});
+
+test('doctor compares the board names exactly and names Linear\'s spelling when only the case differs', { skip: fakesSkip }, (t) => {
+  const b = box(t);
+  b.install();
+  const file = join(b.s.bollplank, 'config.json');
+  const config = JSON.parse(readFileSync(file, 'utf8'));
+  writeFileSync(file, JSON.stringify({ ...config, board: { ...config.board, team: 'acme', project: 'shop', statuses: { ...config.board.statuses, acceptance: 'acceptance', ready: 'Queued' } } }));
+  const r = b.doctor();
+  assert.equal(r.status, 1, r.stdout);
+  const c = byId(r);
+  const acceptance = c['board.status.acme.acceptance'];
+  assert.equal(acceptance.ok, false);
+  assert.equal(acceptance.detail, 'acme has no status named "acceptance" that Claude Code or Codex can read. Linear spells it "Acceptance"');
+  assert.equal(acceptance.fix, 'Set board.statuses.acceptance in the config to "Acceptance", exactly as Linear spells it.');
+  // A status that Linear does not have in any case gets the steps to add it.
+  const ready = c['board.status.acme.ready'];
+  assert.equal(ready.ok, false);
+  assert.equal(ready.detail, 'acme has no status named "Queued" that Claude Code or Codex can read');
+  assert.match(ready.fix, /Settings, then Teams, then acme, then Workflow\. Under Unstarted, add a status named "Queued"\. Or set board\.statuses\.ready in the config to a status that exists\./);
+  assert.equal(c['board.status.acme.done'].ok, true);
+  // The team and the project too.
+  assert.equal(c['board.team.acme'].ok, false);
+  assert.match(c['board.team.acme'].detail, /acme is not a team Claude Code or Codex can read in Linear\. Linear spells it ACME$/);
+  assert.equal(c['board.team.acme'].fix, 'Set board.team in the config to ACME, exactly as Linear spells it.');
+  assert.equal(c['board.project.acme.shop'].ok, false);
+  assert.equal(c['board.project.acme.shop'].fix, 'Set board.project in the config to Shop, exactly as Linear spells it.');
+});
+
+test('doctor shows a Claude probe stopped by a broad Linear allow rule, with its own fix', { skip: fakesSkip }, (t) => {
+  const b = box(t);
+  b.install();
+  writeFileSync(join(b.s.claude, 'settings.json'), JSON.stringify({ permissions: { allow: ['mcp__claude_ai_Linear__*'] } }));
+  const r = b.doctor();
+  assert.equal(r.status, 1, r.stdout);
+  const c = byId(r)['linear.claude'];
+  assert.equal(c.ok, false);
+  assert.match(c.detail, /Your Claude Code settings allow Linear tools broadly \(mcp__claude_ai_Linear__\* in .*settings\.json\), so a read only probe cannot be guaranteed\. The Linear probe did not run\./);
+  assert.match(c.fix, /^Narrow the Linear allow rule in .*settings\.json, then run `bollplank doctor` again\.$/);
+  assert.equal(byId(r)['linear.codex'].ok, true);
 });
 
 test('doctor runs a dry run for each critic default a project sets', { skip: fakesSkip }, (t) => {

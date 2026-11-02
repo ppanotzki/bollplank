@@ -78,6 +78,7 @@ test('stages, gates, reopen, plan, log and show keep the record', (t) => {
 
 test('a code round with one revision names the head of the one changed repo, and check-shipped needs it merged and deployed', (t) => {
   const f = setup(t);
+  f.s.config(acmeConfig(join(f.s.root, 'src'), f.tickets, { 'acme-api': { github: 'acme/acme-api', checks: ['checks'], deploy: { kind: 'github-actions', workflow: 'deploy' } } }));
   mkdirSync(f.folder, { recursive: true });
   writeFileSync(join(f.folder, '.ticket.json'), JSON.stringify({ project: 'acme-shop', ticket: 'ACME-1', branch: 'acme-1-x', repos: { 'acme-api': { kind: 'change' } } }));
   f.run('init', 'acme-shop', 'ACME-1', '--review', 'both');
@@ -90,11 +91,49 @@ test('a code round with one revision names the head of the one changed repo, and
   assert.equal(r.json.detail, 'acme-api is not merged.');
   writeFileSync(join(f.folder, '.run.json'), JSON.stringify({ ...f.record(), repos: { 'acme-api': { merged: true, pr: 7, mergeCommit: 'd'.repeat(40) } } }));
   f.run('deploy', 'acme-shop', 'ACME-1', 'acme-api', '--kind', 'github-actions', '--ref', '41', '--commit', 'd'.repeat(40), '--status', 'failed');
-  assert.match(f.run('check-shipped', 'acme-shop', 'ACME-1').json.detail, /last deploy of d{12} is failed/);
+  assert.match(f.run('check-shipped', 'acme-shop', 'ACME-1').json.detail, /last github-actions deploy of d{12} is failed/);
   f.run('deploy', 'acme-shop', 'ACME-1', 'acme-api', '--kind', 'github-actions', '--ref', '42', '--commit', 'D'.repeat(12), '--status', 'succeeded');
   r = f.run('check-shipped', 'acme-shop', 'ACME-1');
   assert.equal(r.status, 0, r.stdout);
   assert.equal(r.json.repos['acme-api'].deploy.ref, '42');
+});
+
+test('check-shipped counts only a deploy of the repo\'s configured kind, never a merge or release record', (t) => {
+  const f = setup(t);
+  const amplify = { kind: 'amplify', appId: 'd1acme', region: 'eu-north-1' };
+  f.s.config(acmeConfig(join(f.s.root, 'src'), f.tickets, { 'acme-web': { github: 'acme/acme-web', checks: ['checks'], deploy: amplify }, 'acme-api': { github: 'acme/acme-api', checks: ['checks'] } }, { shipOrder: ['acme-api', 'acme-web'] }));
+  mkdirSync(f.folder, { recursive: true });
+  writeFileSync(join(f.folder, '.ticket.json'), JSON.stringify({ project: 'acme-shop', ticket: 'ACME-1', branch: 'acme-1-x', repos: { 'acme-web': { kind: 'change' }, 'acme-api': { kind: 'change' } } }));
+  f.run('init', 'acme-shop', 'ACME-1', '--review', 'none');
+  const web = 'a'.repeat(40);
+  const api = 'b'.repeat(40);
+  writeFileSync(join(f.folder, '.run.json'), JSON.stringify({ ...f.record(), repos: { 'acme-web': { merged: true, pr: 7, mergeCommit: web }, 'acme-api': { merged: true, pr: 8, mergeCommit: api } } }));
+  const deploy = (repo, kind, status, commit, ref) => assert.equal(f.run('deploy', 'acme-shop', 'ACME-1', repo, '--kind', kind, '--status', status, '--commit', commit, ...(ref ? ['--ref', ref] : [])).status, 0);
+  // A successful merge record is not the Amplify deploy, and a repo with no deploy needs its none result.
+  deploy('acme-web', 'merge', 'succeeded', web);
+  deploy('acme-api', 'merge', 'succeeded', api);
+  let r = f.run('check-shipped', 'acme-shop', 'ACME-1');
+  assert.equal(r.status, 1, r.stdout);
+  assert.equal(r.json.detail, `acme-api has no none deploy recorded for its merge commit ${api.slice(0, 12)}. acme-web has no amplify deploy recorded for its merge commit ${web.slice(0, 12)}.`);
+  assert.equal(r.json.repos['acme-web'].kind, 'amplify');
+  assert.equal(r.json.repos['acme-web'].deployed, false);
+  deploy('acme-api', 'none', 'succeeded', api, 'none');
+  // A failed Amplify deploy stays failed, whatever release record comes after it.
+  deploy('acme-web', 'amplify', 'failed', web, '41');
+  deploy('acme-web', 'release', 'succeeded', web, 'v1.0.0');
+  r = f.run('check-shipped', 'acme-shop', 'ACME-1');
+  assert.equal(r.status, 1, r.stdout);
+  assert.equal(r.json.detail, `acme-web's last amplify deploy of ${web.slice(0, 12)} is failed.`);
+  assert.equal(r.json.repos['acme-web'].deploy.ref, '41');
+  assert.equal(r.json.repos['acme-api'].deployed, true);
+  // A command deploy of the same commit is not the Amplify deploy either.
+  deploy('acme-web', 'command', 'succeeded', web, './wait.sh');
+  assert.equal(f.run('check-shipped', 'acme-shop', 'ACME-1').status, 1);
+  deploy('acme-web', 'amplify', 'succeeded', web, '42');
+  r = f.run('check-shipped', 'acme-shop', 'ACME-1');
+  assert.equal(r.status, 0, r.stdout);
+  assert.equal(r.json.repos['acme-web'].deploy.ref, '42');
+  assert.equal(r.json.repos['acme-api'].deploy.kind, 'none');
 });
 
 test('run refuses unknown commands, bad ticket ids and a missing record', (t) => {

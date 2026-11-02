@@ -2,9 +2,9 @@
 // holds nothing else. No test runs a real client, adds a real MCP server or makes a model call.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { sandbox, fakesSkip, gitRepo, kit } from './helpers.mjs';
 import * as claude from '../lib/providers/claude.mjs';
 import * as codex from '../lib/providers/codex.mjs';
@@ -19,7 +19,11 @@ const REPLY = JSON.stringify({ teams: [{ key: 'ACME', name: 'Acme', statuses, pr
 `;
 
 // FAKE_LINEAR: none (no Linear tool), real (a real tool call), claimed (a reply with no call),
-// error (the call fails). After `mcp add` the fake has a server named linear that works.
+// error (the call fails), write (a read, then a call to the write tool FAKE_WRITE_TOOL, save_issue by
+// default). After `mcp add` the fake has a server named linear that works. Tool calls are permitted
+// the way Claude Code permits them: a deny rule from --disallowedTools or a settings file wins, then
+// an allow rule from --allowedTools or a settings file, with * wildcards, and in dontAsk anything not
+// allowed is refused. A tool that runs is logged as ran.
 const FAKE_CLAUDE = `
 const fs = require('node:fs');
 const path = require('node:path');
@@ -65,13 +69,37 @@ if (args.includes('--input-format')) {
   process.stdin.on('end', () => {
     log({ prompt: input });
     const server = linear === 'added' ? 'linear' : 'claude_ai_Linear';
+    const files = [path.join(process.env.CLAUDE_CONFIG_DIR, 'settings.json'), path.join(process.env.CLAUDE_CONFIG_DIR, 'settings.local.json'), path.join(process.cwd(), '.claude', 'settings.json'), path.join(process.cwd(), '.claude', 'settings.local.json'), process.env.BOLLPLANK_CLAUDE_MANAGED_SETTINGS];
+    const saved = (kind) => files.flatMap((f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')).permissions?.[kind] ?? []; } catch { return []; } });
+    const glob = (p, s) => {
+      const parts = p.split('*');
+      if (parts.length === 1) return p === s;
+      if (!s.startsWith(parts[0])) return false;
+      let i = parts[0].length;
+      for (const mid of parts.slice(1, -1)) { const j = s.indexOf(mid, i); if (j < 0) return false; i = j + mid.length; }
+      const last = parts.at(-1);
+      return s.length - last.length >= i && s.endsWith(last);
+    };
+    const matches = (rule, tool) => { const r = String(rule).split('(')[0].trim(); return r !== '' && (glob(r, tool) || (!r.includes('*') && tool.startsWith(r + '__'))); };
+    const rules = (flag, kind) => [...(at(flag) || '').split(',').filter(Boolean), ...saved(kind)];
+    const permitted = (tool) => {
+      if (rules('--disallowedTools', 'deny').some((r) => matches(r, tool))) return false;
+      if (rules('--allowedTools', 'allow').some((r) => matches(r, tool))) return true;
+      // dontAsk refuses anything not allowed. The fake answers no prompt in any other mode either.
+      return false;
+    };
     emit({ type: 'system', subtype: 'init' });
-    if (linear === 'real' || linear === 'added' || linear === 'error') {
-      emit({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'toolu_1', name: 'mcp__' + server + '__list_teams', input: {} }] } });
-      const tool = 'mcp__' + server + '__list_teams';
-      const permitted = (at('--allowedTools') || '').split(',').some((r) => (r.endsWith('*') ? tool.startsWith(r.slice(0, -1)) : r === tool || r === 'mcp__' + server));
-      const failed = linear === 'error' || !permitted;
-      emit({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_1', is_error: failed, content: failed ? (permitted ? 'Linear answered 401' : 'Permission denied') : [{ type: 'text', text: TEAMS_TEXT }] }] } });
+    if (['real', 'added', 'error', 'write'].includes(linear)) {
+      const names = ['list_teams', ...(linear === 'write' ? [process.env.FAKE_WRITE_TOOL || 'save_issue'] : [])];
+      names.forEach((name, i) => {
+        const tool = 'mcp__' + server + '__' + name;
+        const id = 'toolu_' + (i + 1);
+        emit({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name: tool, input: {} }] } });
+        const ok = permitted(tool);
+        if (ok) log({ ran: tool });
+        const failed = linear === 'error' || !ok;
+        emit({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, is_error: failed, content: failed ? (ok ? 'Linear answered 401' : 'Permission denied') : [{ type: 'text', text: name === 'list_teams' ? TEAMS_TEXT : '{"saved":true}' }] }] } });
+      });
     }
     emit({ type: 'result', subtype: 'success', is_error: false, result: linear === 'none' ? '{"error":"no Linear tool"}' : REPLY });
   });
@@ -275,7 +303,13 @@ test('the Claude probe passes on a real tool call through a connector and fails 
   assert.equal(probe.args[probe.args.indexOf('--permission-mode') + 1], 'dontAsk');
   assert.equal(probe.args[probe.args.indexOf('--permission-prompts') + 1], 'none');
   assert.equal(probe.args.includes('--setting-sources'), false);
-  assert.equal(probe.args[probe.args.indexOf('--disallowedTools') + 1], 'mcp__acme-files');
+  // The other server is denied by name, and every common write verb on the Linear server, with and
+  // without a linear prefix, as a second layer.
+  const denied = probe.args[probe.args.indexOf('--disallowedTools') + 1].split(',');
+  assert.equal(denied[0], 'mcp__acme-files');
+  for (const v of claude.WRITE_VERBS) for (const p of ['', 'linear_']) assert.ok(denied.includes(`mcp__claude_ai_Linear__${p}${v}*`), `${p}${v}`);
+  assert.equal(denied.some((d) => /__(linear_)?(list|get|search|read)/.test(d)), false);
+  assert.equal(probe.args.filter((a) => a === '--disallowedTools').length, 1);
   assert.match(probe.prompt, /Bollplank setup check/);
   const claimed = claude.probeLinear({ bin, env: env('claimed'), cwd });
   assert.equal(claimed.ok, false);
@@ -284,6 +318,90 @@ test('the Claude probe passes on a real tool call through a connector and fails 
   const none = claude.probeLinear({ bin, env: env('none'), cwd });
   assert.equal(none.ok, false);
   assert.match(none.detail, /claude mcp list/);
+});
+
+// A settings file with only permissions.allow, at a path relative to the sandbox.
+const allowIn = (file, allow) => {
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify({ permissions: { allow } }));
+};
+
+test('a saved allow rule for one Linear write tool is denied by name, and the fake Claude refuses it before it runs', { skip: fakesSkip }, (t) => {
+  const b = box(t, { clients: ['claude'] });
+  const bin = join(b.s.fakes, 'claude');
+  const cwd = join(b.s.root, 'neutral');
+  // import_issues starts with no write verb, so only the deny by name stops it. A read rule and a
+  // rule for another tool are left alone.
+  allowIn(join(b.s.claude, 'settings.json'), ['mcp__claude_ai_Linear__import_issues', 'mcp__claude_ai_Linear__list_teams', 'Bash(npm test)']);
+  allowIn(join(cwd, '.claude', 'settings.local.json'), ['mcp__claude_ai_Linear__save_issue']);
+  const r = claude.probeLinear({ bin, env: { ...b.s.env, ...b.env, FAKE_LINEAR: 'write', FAKE_WRITE_TOOL: 'import_issues' }, cwd });
+  const probe = b.calls().find((c) => c.args[0] === '-p' && c.prompt);
+  const denied = probe.args[probe.args.indexOf('--disallowedTools') + 1].split(',');
+  assert.ok(denied.includes('mcp__claude_ai_Linear__import_issues'));
+  assert.ok(denied.includes('mcp__claude_ai_Linear__save_issue'));
+  assert.equal(denied.includes('mcp__claude_ai_Linear__list_teams'), false);
+  // The read ran, the write was refused before it ran, and judge fails the probe on the call.
+  assert.deepEqual(b.calls().filter((c) => c.ran).map((c) => c.ran), ['mcp__claude_ai_Linear__list_teams']);
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /called mcp__claude_ai_Linear__import_issues, which is not a Linear read/);
+  assert.deepEqual(claude.savedLinearAllows(claude.settingsFiles(b.s.env, cwd), ['claude_ai_Linear']).deny.sort(), ['mcp__claude_ai_Linear__import_issues', 'mcp__claude_ai_Linear__save_issue']);
+  // Without the deny by name, the saved rule lets it run, as it would in Claude Code.
+  spawnSync(bin, ['-p', '--permission-mode', 'dontAsk', '--allowedTools', 'mcp__claude_ai_Linear__list*'], { env: { ...b.s.env, ...b.env, FAKE_LINEAR: 'write', FAKE_WRITE_TOOL: 'import_issues' }, cwd, input: 'probe' });
+  assert.deepEqual(b.calls().filter((c) => c.ran).map((c) => c.ran), ['mcp__claude_ai_Linear__list_teams', 'mcp__claude_ai_Linear__list_teams', 'mcp__claude_ai_Linear__import_issues']);
+});
+
+test('a saved whole server or wildcard Linear allow rule stops the Claude probe before any model turn', { skip: fakesSkip }, (t) => {
+  const b = box(t, { clients: ['claude'] });
+  const bin = join(b.s.fakes, 'claude');
+  const cwd = join(b.s.root, 'neutral');
+  const managed = b.s.env.BOLLPLANK_CLAUDE_MANAGED_SETTINGS;
+  const cases = [
+    [join(b.s.claude, 'settings.json'), 'mcp__claude_ai_Linear'],
+    [join(b.s.claude, 'settings.local.json'), 'mcp__claude_ai_Linear__*'],
+    [join(cwd, '.claude', 'settings.json'), 'mcp__*'],
+    [managed, 'mcp__claude_ai_Linear__linear_*(acme-note)'],
+    [join(cwd, '.claude', 'settings.local.json'), '*'],
+  ];
+  for (const [file, rule] of cases) {
+    allowIn(file, [rule]);
+    const r = claude.probeLinear({ bin, env: { ...b.s.env, ...b.env, FAKE_LINEAR: 'write' }, cwd });
+    assert.equal(r.ok, false, rule);
+    assert.equal(r.blocked, true, rule);
+    assert.match(r.detail, /Your Claude Code settings allow Linear tools broadly \(.+\), so a read only probe cannot be guaranteed\. The Linear probe did not run\. Replace that allow rule with rules that each name one Linear tool, such as mcp__claude_ai_Linear__list_teams, or with read verbs only, such as mcp__claude_ai_Linear__list\*\. Or remove it\./, rule);
+    assert.ok(r.detail.includes(`${rule.split('(')[0]} in ${file}`), r.detail);
+    assert.equal(r.detail.includes('acme-note'), false);
+    assert.match(r.fix, /Narrow the Linear allow rule in .+, then run `bollplank doctor` again\./);
+    rmSync(file);
+  }
+  assert.equal(b.calls().some((c) => c.args[0] === '-p'), false);
+  // A file that is not valid JSON fails closed too.
+  writeFileSync(managed, '{"permissions":');
+  const broken = claude.probeLinear({ bin, env: { ...b.s.env, ...b.env, FAKE_LINEAR: 'real' }, cwd });
+  assert.equal(broken.ok, false);
+  assert.match(broken.detail, /could not read .*managed-settings\.json/);
+  assert.equal(b.calls().some((c) => c.args[0] === '-p'), false);
+});
+
+test('saved Linear allow rules limited to reads, or no rules, leave the Claude probe as it was', { skip: fakesSkip }, (t) => {
+  const b = box(t, { clients: ['claude'] });
+  const bin = join(b.s.fakes, 'claude');
+  const cwd = join(b.s.root, 'neutral');
+  const env = { ...b.s.env, ...b.env, FAKE_LINEAR: 'real' };
+  const plain = claude.probeLinear({ bin, env, cwd });
+  assert.equal(plain.ok, true, plain.detail);
+  allowIn(join(b.s.claude, 'settings.json'), ['mcp__claude_ai_Linear__list_teams', 'mcp__claude_ai_Linear__get*', 'mcp__*__search*', 'mcp__acme-files', 'Read(~/notes/**)']);
+  writeFileSync(b.s.env.BOLLPLANK_CLAUDE_MANAGED_SETTINGS, JSON.stringify({ permissions: { deny: ['WebFetch'] } }));
+  const read = claude.probeLinear({ bin, env, cwd });
+  assert.equal(read.ok, true, read.detail);
+  const [first, second] = b.calls().filter((c) => c.args[0] === '-p' && c.prompt).map((c) => c.args);
+  assert.deepEqual(second, first);
+  // The reach of single rules on the kept server.
+  const reach = (tool) => claude.linearReach(tool, 'claude_ai_Linear');
+  assert.equal(reach('mcp__claude_ai_Linear__save_issue'), 'one');
+  assert.equal(reach('mcp__claude_ai_Linear__listTeams'), null);
+  assert.equal(reach('mcp__claude_ai_Linear__linear_get*'), null);
+  for (const broad of ['mcp__claude_ai_Linear', 'mcp__claude_ai_Linear__*', 'mcp__claude*', 'mcp__*', '*', 'mcp__claude_ai_Linear__*_issue', 'mcp__claude_ai_Linear__l*', 'mcp__claude_ai_Linear__s*']) assert.equal(reach(broad), 'broad', broad);
+  for (const other of ['mcp__acme-files', 'mcp__acme-files__*', 'mcp__acme*', 'Bash', 'Read']) assert.equal(reach(other), null, other);
 });
 
 test('the Codex probe passes on a real MCP tool call event and fails on a claimed one', { skip: fakesSkip }, (t) => {
@@ -509,6 +627,35 @@ test('a failed probe offers the Linear MCP, adds it on a yes, and checks again',
   assert.match(text(r), /Left Codex as it is/);
   assert.deepEqual(r.json.linear.claude.ok, true);
   assert.deepEqual(r.json.linear.codex.ok, false);
+});
+
+test('init shows a probe stopped by a broad Linear allow rule, and offers no Linear MCP for it', { skip: fakesSkip }, (t) => {
+  const b = box(t, { clients: ['claude'] });
+  allowIn(join(b.s.claude, 'settings.json'), ['mcp__claude_ai_Linear']);
+  const r = b.init(withSource(b, { addLinear: { claude: true } }));
+  assert.equal(r.status, 0, r.stdout);
+  assert.match(text(r), /Your Claude Code settings allow Linear tools broadly \(mcp__claude_ai_Linear in .*settings\.json\), so a read only probe cannot be guaranteed/);
+  assert.match(text(r), /Narrow the Linear allow rule in .*settings\.json, then run `bollplank doctor` again\./);
+  assert.equal(r.json.linear.claude.ok, false);
+  assert.equal(b.calls().some((c) => c.args[0] === 'mcp' && c.args[1] !== 'list'), false);
+  assert.equal(b.calls().some((c) => c.args[0] === '-p' && c.prompt?.includes('Bollplank setup check')), false);
+  const check = r.json.doctor.checks.find((c) => c.id === 'linear.claude');
+  assert.equal(check.ok, false);
+  assert.match(check.detail, /allow Linear tools broadly/);
+  assert.match(check.fix, /Narrow the Linear allow rule/);
+});
+
+test('init saves the team, project and status names exactly as Linear returned them', { skip: fakesSkip }, (t) => {
+  const b = box(t);
+  const r = b.init(withSource(b, { team: 'acme', project: 'shop', statuses: { acceptance: 'acceptance', done: 'DONE' } }));
+  assert.equal(r.status, 0, r.stdout);
+  const c = b.config();
+  assert.deepEqual(c.projects['acme-shop'].board, { team: 'ACME', project: 'Shop' });
+  assert.equal(c.board.statuses.acceptance, 'Acceptance');
+  assert.equal(c.board.statuses.done, 'Done');
+  assert.match(text(r), /Saved the team as ACME, the way Linear spells it\./);
+  assert.match(text(r), /Saved the project as Shop, the way Linear spells it\./);
+  for (const id of ['board.team.ACME', 'board.project.ACME.Shop', 'board.status.ACME.acceptance']) assert.equal(r.json.doctor.checks.find((x) => x.id === id).ok, true, id);
 });
 
 test('a missing status is never created: init shows the steps and checks again on a yes', { skip: fakesSkip }, (t) => {
