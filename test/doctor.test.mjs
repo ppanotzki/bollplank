@@ -7,11 +7,12 @@ import { join } from 'node:path';
 import { sandbox, fakesSkip, bin } from './helpers.mjs';
 
 // The same fakes as test/init.test.mjs.
-// What a Linear tool returns for the synthetic workspace. FAKE_STATUSES replaces the status list.
+// What a Linear tool returns for the synthetic workspace. FAKE_STATUSES replaces the status list,
+// FAKE_PROJECTS the project list, and FAKE_REPLY_STATUSES the statuses the model claims in its reply.
 const TEAMS = `
 const statuses = (process.env.FAKE_STATUSES || 'Backlog,Draft,Ready,In Progress,Acceptance,Done').split(',');
-const TEAMS_TEXT = JSON.stringify({ teams: [{ id: 't1', key: 'ACME', name: 'Acme', states: statuses.map((name) => ({ name })), projects: [{ name: 'Shop' }, { name: 'Widgets' }] }] });
-const REPLY = JSON.stringify({ teams: [{ key: 'ACME', name: 'Acme', statuses: process.env.FAKE_REPLY_LOWER ? statuses.map((s) => s.toLowerCase()) : statuses, projects: ['Shop', 'Widgets'] }, { key: 'GLOBEX', name: 'Globex', statuses: ['Todo'], projects: [] }] });
+const TEAMS_TEXT = JSON.stringify({ teams: [{ id: 't1', key: 'ACME', name: 'Acme', states: statuses.map((name) => ({ name })), projects: (process.env.FAKE_PROJECTS || 'Shop,Widgets').split(',').map((name) => ({ name })) }] });
+const REPLY = JSON.stringify({ teams: [{ key: 'ACME', name: 'Acme', statuses: process.env.FAKE_REPLY_STATUSES ? process.env.FAKE_REPLY_STATUSES.split(',') : process.env.FAKE_REPLY_LOWER ? statuses.map((s) => s.toLowerCase()) : statuses, projects: ['Shop', 'Widgets'] }, { key: 'GLOBEX', name: 'Globex', statuses: ['Todo'], projects: [] }] });
 `;
 
 // FAKE_LINEAR: none (no Linear tool), real (a real tool call), claimed (a reply with no call),
@@ -273,6 +274,23 @@ test('doctor goes by the tool\'s spelling even when the model writes a status in
   const acceptance = byId(r)['board.status.ACME.acceptance'];
   assert.equal(acceptance.ok, false);
   assert.equal(acceptance.fix, 'Set board.statuses.acceptance in the config to "Acceptance", exactly as Linear spells it.');
+});
+
+test('doctor takes a status only from a whole status name, never from a project or a longer status', { skip: fakesSkip }, (t) => {
+  const b = box(t);
+  b.install();
+  const file = join(b.s.bollplank, 'config.json');
+  const config = JSON.parse(readFileSync(file, 'utf8'));
+  writeFileSync(file, JSON.stringify({ ...config, board: { ...config.board, statuses: { ...config.board.statuses, acceptance: 'acceptance' } } }));
+  // A project named "User acceptance" does not make "acceptance" a status. Linear's own spelling wins.
+  const project = byId(b.doctor(['--json'], { FAKE_REPLY_LOWER: '1', FAKE_PROJECTS: 'Shop,Widgets,User acceptance' }))['board.status.ACME.acceptance'];
+  assert.equal(project.ok, false);
+  assert.equal(project.fix, 'Set board.statuses.acceptance in the config to "Acceptance", exactly as Linear spells it.');
+  // "Awaiting Acceptance" does not make "Acceptance" a status, even when the model claims it.
+  writeFileSync(file, JSON.stringify({ ...config, board: { ...config.board, statuses: { ...config.board.statuses, acceptance: 'Acceptance' } } }));
+  const longer = byId(b.doctor(['--json'], { FAKE_STATUSES: 'Backlog,Draft,Ready,In Progress,Awaiting Acceptance,Done', FAKE_REPLY_STATUSES: 'Backlog,Draft,Ready,In Progress,Acceptance,Done' }))['board.status.ACME.acceptance'];
+  assert.equal(longer.ok, false);
+  assert.match(longer.fix, /add a status named "Acceptance"/);
 });
 
 test('doctor shows a Claude probe stopped by a broad Linear allow rule, with its own fix', { skip: fakesSkip }, (t) => {

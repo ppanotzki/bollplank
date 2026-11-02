@@ -246,7 +246,7 @@ test('judge spells every name as the tool returned it, whatever case the model w
   const reply = JSON.stringify({ teams: [{ key: 'acme', name: 'ACME', statuses: ['acceptance', 'in progress', 'Acceptance'], projects: ['shop'] }] });
   const r = judge('Acme client', [tool], reply);
   assert.equal(r.ok, true, r.detail);
-  assert.deepEqual(r.teams, [{ key: 'ACME', name: 'ACME', statuses: ['Acceptance', 'In Progress'], projects: ['Shop'] }]);
+  assert.deepEqual(r.teams, [{ key: 'ACME', name: 'Acme', statuses: ['Acceptance', 'In Progress'], projects: ['Shop'] }]);
 });
 
 test('the probe allows only Linear tools that list, get, search or read, and fails on a write', () => {
@@ -465,6 +465,24 @@ test('the Codex probe says how to sign in to a Linear server that is signed out,
   assert.equal(r.needsLogin, true);
   assert.match(r.detail, /not signed in to it\. Run `codex mcp login linear`/);
   assert.equal(b.calls().some((c) => c.tool === 'codex' && c.args[0] === 'exec'), false);
+});
+
+test('judge takes names only as whole values from their own fields', () => {
+  const text = JSON.stringify({ teams: [{ key: 'ACME', name: 'Acme', states: [{ name: 'Acceptance' }, { name: 'Awaiting Review' }], projects: [{ name: 'Shop' }, { name: 'User acceptance' }] }] });
+  const tool = { name: 'mcp__acme_linear__list_teams', ok: true, text };
+  // The model writes "acceptance": the status pool has "Acceptance", the project "User acceptance" is no status.
+  const lower = judge('Acme client', [tool], JSON.stringify({ teams: [{ key: 'ACME', name: 'Acme', statuses: ['acceptance', 'Review'], projects: ['user acceptance'] }] }));
+  assert.equal(lower.ok, true, lower.detail);
+  assert.deepEqual(lower.teams[0].statuses, ['Acceptance']);
+  assert.deepEqual(lower.teams[0].projects, ['User acceptance']);
+  // A status that only appears inside a longer one is dropped.
+  const longer = { ...tool, text: JSON.stringify({ teams: [{ key: 'ACME', name: 'Acme', states: [{ name: 'Awaiting Acceptance' }], projects: [] }] }) };
+  assert.deepEqual(judge('Acme client', [longer], JSON.stringify({ teams: [{ key: 'ACME', name: 'Acme', statuses: ['Acceptance'] }] })).teams[0].statuses, []);
+  // Statuses from a status tool and projects from a project tool, wrapped in a client envelope.
+  const states = { name: 'codex_linear/list_issue_statuses', ok: true, text: JSON.stringify({ content: [{ type: 'text', text: JSON.stringify([{ name: 'Acceptance', team: { key: 'ACME' } }, { name: 'Todo', team: { key: 'GLOBEX' } }]) }] }) };
+  const teamsOnly = { ...tool, text: JSON.stringify({ teams: [{ key: 'ACME', name: 'Acme' }, { key: 'GLOBEX', name: 'Globex' }] }) };
+  const r = judge('Acme client', [teamsOnly, states], JSON.stringify({ teams: [{ key: 'ACME', name: 'Acme', statuses: ['Acceptance', 'Todo'] }] }));
+  assert.deepEqual(r.teams[0].statuses, ['Acceptance']);
 });
 
 test('addLinearMcp runs the documented add and login commands for each client', { skip: fakesSkip }, (t) => {
