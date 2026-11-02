@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.0 (unreleased)
+
+- The critic works the board itself. It reads the issue and its comments with its own client's Linear tools and posts its critique as one comment. A round counts only when it read the issue and its comments, otherwise the call fails with `board-unreachable` and the session is kept for a retry. A client with no Linear server fails with `critic-unavailable` before any model turn. `posted` says whether the comment was saved.
+- The critic gets the Linear tools of its client and nothing else beyond its source folder. Claude Code gets no shell, with every other MCP server and the shell, edit and web tools denied by name, and your user settings loaded with the deny rules winning. Codex keeps its shell inside the read only sandbox, with no network and no approvals, and every other MCP server switched off.
+- `bollplank critic --instruction-file` passes an instruction from the approver to the critic. The prompts gain `{ISSUE}` and `{INSTRUCTION}`. When the client reports another model than the pinned one, the result carries `modelCorrection` and the critique skill fixes the posted Model line.
+- Statuses per project. A project can map the five workflow states to its own team's statuses in `projects.<name>.board.statuses`. Each state's name comes from the project's mapping, then the top level one, then Linear's suggestion of Draft, Ready, In Progress, Acceptance and Done. `bollplank context <project>` returns the project's mapping, and doctor checks each project against its own team.
+- Init asks for each project's Linear team and project, and whether it maps its own statuses. It explains each workflow state and which suggested statuses a new Linear team lacks.
+- Init never writes to the board. For a missing Linear project it offers another project, a sentence to type in your own Claude Code or Codex session, or the steps in Linear, and then reads Linear again. It stops with `missing-project` after three reads without it. The board skill gains two operations you ask for: create a project, after confirming the team and the name, and check a project's statuses.
+- New guides: getting started and an existing project. The reference pages are shorter.
+- The gate checks the docs, skills and prompts for ticket keys other than `ACME-<n>` and for internal names, and requires `{ISSUE}` and `{INSTRUCTION}` in the critic prompts.
+
 ## 0.1.0 (2026-11-02)
 
 The first version.
@@ -14,5 +25,5 @@ The first version.
 - Ticket runs in three modes: repository, consulting and configuration. Runs are off unless a project sets `runs` to `true`.
 - `bollplank ticket` for worktrees per repo with a base branch per repo, `bollplank run` for the run record and its review gates, `bollplank turn` for the shipping lock, which another kit writing the same record can share, and `bollplank merge`, which merges only on green configured checks and complete review stages, for the run's own ticket and repo and a PR from the ticket branch in the configured repo, never a fork, and with a selected code stage only when the PR head carries the change approved for that repo by verbatim patch id, which keeps whitespace. A code round names the reviewed head of each repo with `--revisions`, and `bollplank run check-shipped` says whether every changed repo is merged and deployed, by a deploy of its configured kind.
 - `bollplank deploy-wait` with the deploy kinds `none`, `command`, `amplify` and `github-actions`, each returning a status of `succeeded`, `failed` or `timeout` and a ref that `bollplank run deploy` records.
-- `bollplank ledger` for tokens per model and the timeline of each ticket, reading markers from both Bollplank and the kit it replaces.
+- `bollplank ledger` for tokens per model and the timeline of each ticket, reading Bollplank's markers and those of another tool that writes the same kind of marker.
 - The gate `scripts/check.mjs`, run in CI on Ubuntu and Windows with Node 20 and 22 and locally on macOS before every PR, with a private name check whose list lives outside the repo. It reads whole messages, authors and committers, binary and `-diff` files and merge changes, and fails on a shallow clone or an invalid pattern. Projects can opt in to the same check at merge with `privateScan`, which also scans the PR title and body that become the squash message.

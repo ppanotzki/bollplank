@@ -1,11 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse, missing } from '../lib/args.mjs';
 import { validate, withDefaults } from '../lib/config.mjs';
 import { workflowLine } from '../lib/version.mjs';
 import { scan } from '../lib/private-scan.mjs';
+import { docsFiles, docsProblems, textProblems } from '../lib/docs-check.mjs';
 import { kit, sandbox, gitRepo, acmeConfig } from './helpers.mjs';
 
 const example = () => JSON.parse(readFileSync(join(kit, 'examples', 'config.example.json'), 'utf8'));
@@ -154,4 +156,28 @@ test('the private name scan passes, fails or skips, and never prints a name', (t
   assert.ok(!JSON.stringify(inHistory).toLowerCase().includes('secretclient'));
   r.commit('other.md', 'fine\n', 'Fix ACME-12 in the message');
   assert.ok(scan(r.work, 'HEAD', env, list).hits.some((h) => h.pattern === 2 && h.file === null));
+});
+
+test('the docs check fails on a real ticket key and an internal name or command, and passes on ACME-1', (t) => {
+  assert.deepEqual(textProblems('Run ACME-1, then ACME-12.\nSee ACME-0.', 'README.md'), []);
+  assert.deepEqual(textProblems('Fixed in GLOBEX-7 last week.', 'README.md'), ['README.md:1: a ticket key GLOBEX-7']);
+  assert.deepEqual(textProblems('one\nThen run aw-merge on it.', 'docs/setup.md'), ['docs/setup.md:2: an internal command aw-merge']);
+  assert.deepEqual(textProblems('Copied from agent-workflow.', 'SECURITY.md'), ['SECURITY.md:1: an internal name agent-workflow']);
+  // A word that only contains the letters is not a hit, and the line is never echoed.
+  assert.deepEqual(textProblems('Draw-in and raw-data are fine. So is UTF8.', 'docs/a.md'), []);
+  const [hit] = textProblems('A long private line that names AB2-3 somewhere in it.', 'docs/a.md');
+  assert.equal(hit, 'docs/a.md:1: a ticket key AB2-3');
+
+  const root = mkdtempSync(join(tmpdir(), 'bollplank-docs-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  for (const d of ['docs/plans', 'skills/bollplank-x', 'prompts', 'lib']) mkdirSync(join(root, d), { recursive: true });
+  writeFileSync(join(root, 'README.md'), 'Run ACME-1.\n');
+  writeFileSync(join(root, 'docs', 'plans', 'GLOBEX-7.md'), 'GLOBEX-7 and aw-run, while the work runs.\n');
+  writeFileSync(join(root, 'skills', 'bollplank-x', 'SKILL.md'), 'ok\nUse aw-ticket.\n');
+  writeFileSync(join(root, 'prompts', 'critic.md'), 'Read {ISSUE}.\n');
+  writeFileSync(join(root, 'lib', 'turn.mjs'), '// reads the aw-turn lock\n');
+  assert.ok(!docsFiles(root).some((f) => f.includes('plans')));
+  assert.deepEqual(docsProblems(root), ['skills/bollplank-x/SKILL.md:2: an internal command aw-ticket']);
+  // The shipped docs pass.
+  assert.deepEqual(docsProblems(kit), []);
 });

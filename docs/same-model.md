@@ -1,28 +1,24 @@
 # Same model mode
 
-The method works best when the critic comes from another vendor than the lead. Same model mode is for people with only one client, or for a ticket where the approver chooses it. It is a weaker review, and Bollplank labels it as one.
+The method works best with a critic from another vendor than the lead. Same model mode is for people with one client, or for a ticket where the approver chooses it. It is weaker, and labelled as such.
 
 ## What it does
 
-- **A separate session.** The critic is a fresh session of the lead's own client that inherits nothing from the lead's session. One such session is kept per ticket and reused across that ticket's brief, plan and code rounds, so it remembers the brief when it reviews the plan.
-- **A harder prompt.** [prompts/critic-same.md](../prompts/critic-same.md) tells the critic that it likely shares the author's blind spots. It asks for the strongest reason the subject fails first, a check of every claim against the source, no credit for intent, and an Approve only after it looked for a failure and found none.
-- **Its own model setting.** `critic.same.<provider>` in the config can pin a different model or a higher effort for same provider reviews, when your subscription offers one. Without it, `critic.providers.<provider>` applies.
-- **A label.** The critique's Reviewer line reads `Claude Code, same provider, separate session` or `Codex, same provider, separate session`. Its state file is separate from an other provider critic's, so their rounds never mix.
+- **A separate session** of the lead's own client, sharing nothing with the lead's session. One is kept per ticket across its brief, plan and code rounds. It works the board like any critic.
+- **A harder prompt**, [prompts/critic-same.md](../prompts/critic-same.md). It says the critic likely shares the author's blind spots, and asks for the strongest reason the subject fails, a check of every claim, no credit for intent, and an Approve only after it looked for a failure and found none.
+- **Its own model setting.** `critic.same.<provider>` can pin another model or a higher effort. Without it, `critic.providers.<provider>` applies.
+- **A label.** The Reviewer line reads `Claude Code, same provider, separate session` or `Codex, same provider, separate session`. Its rounds are kept apart from another critic's.
 
-## Why it is weaker
-
-A model reviewing its own vendor's work tends to accept the same premises and miss the same things. A different model with no authorship looks for different problems. The harder prompt and a fresh session help, but they do not make it another vendor. Both kinds of critic can also share an error when the code itself misleads them, such as through an outdated comment.
+A model reviewing its own vendor's work tends to accept the same premises and miss the same things. The prompt and the fresh session help, but they do not make it another vendor.
 
 ## How it is chosen
 
-Same model mode is used only when someone chose it:
+Only when someone chooses it:
 
-1. **In the config:** `"critic": { "default": "same" }`. `bollplank init` offers this when it finds only one client, and says what it means. It never changes an existing `other` without asking.
-2. **For a ticket:** a `Critic: same` line in the brief, under the Cross-model review line. Once the brief is approved, that line wins for the ticket, and the critique skill refuses to run any other critic for it.
-3. **For one call:** `bollplank critic --critic same`, when the lead has the approver's word for it.
+1. **In the config:** `"critic": { "default": "same" }`. `bollplank init` offers it when it finds one client, and never changes an existing `other` without an answer.
+2. **For a ticket:** a `Critic: same` line in the brief. Once approved, it wins for the ticket.
+3. **For one call:** `bollplank critic --critic same`, on the approver's word.
 
-Naming the lead's own provider (`--critic claude` in a Claude Code session) is a same provider review too, and is labelled as one.
+Naming the lead's own provider, such as `--critic claude` in a Claude Code session, is a same provider review too.
 
-## What never happens
-
-Nothing switches to same model mode on its own. With `critic.default` set to `other` and only one client available, `bollplank critic` fails with `critic-unavailable`, a selected review stage stays incomplete, and the approver decides. If they choose `same` for a ticket whose approved brief names another critic, that is a revised brief with a new `Critic:` line, approved again.
+Nothing switches to it on its own. With `other` and one client, `bollplank critic` fails with `critic-unavailable`, and the approver decides. Choosing `same` for a ticket whose approved brief names another critic means a revised brief, approved again.
