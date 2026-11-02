@@ -50,9 +50,11 @@ Runs one critique round. The critic reads the issue and its comments with its cl
 
 **What the critic gets.** Its client's Linear tools, read and write, and the `--read-dir` folder. No other MCP server, no web and no file edits. Claude Code has no shell. Codex has a shell in a read only sandbox with no network. Its environment loses every model key, provider route and session marker. [SECURITY.md](../SECURITY.md#what-the-critic-can-reach) has the detail.
 
-**The subject must have been read.** A round counts only when the critic made a successful call that read the issue and one that read its comments. Otherwise the call fails with `board-unreachable`, the round stays open and the session is kept, so a retry resumes it.
+**The subject must have been read.** A critique is used only when the critic made a successful call that read the issue and one that read its comments. Otherwise the call fails with `board-unreachable` and the session is kept, so a retry resumes it.
 
-**Sessions and rounds.** One session per ticket, provider and mode is reused across subjects. Rounds count per subject, and `--round` must be one more than the rounds saved, or the call fails with `round-mismatch`. State is saved only after a well formed critique. One call per ticket, provider and mode runs at a time. Every call with a known session is bound to its ticket in the ledger.
+**What the critic posted counts.** The body of the critic's successful comment call on the issue is the source of truth. Only an argument that identifies the issue, such as `issueId`, `id` or `url`, can name it, never free text such as a body or a query. When that body is a well formed critique, it is the returned text, even when the final reply is empty or malformed. When the call fails after such a post, for any reason, the round is counted all the same and the failure says `counted: true`, since the board holds that round now. The lead then posts nothing more and calls the next round when it is due.
+
+**Sessions and rounds.** One session per ticket, provider and mode is reused across subjects. Rounds count per subject, and `--round` must be one more than the rounds saved, or the call fails with `round-mismatch`. State is saved with a counted round, and after `board-unreachable` with only the session, so a retry resumes it. Any other failure saves nothing. One call per ticket, provider and mode runs at a time. Every call with a known session is bound to its ticket in the ledger.
 
 **The header.** The command fills `Reviewer:`, `Model:` and `Workflow:` before the call. `Reviewer:` is `Claude Code` or `Codex`, with `, same provider, separate session` for the lead's own provider. `Model:` is the pinned `model` and `effort`, or `Unverified`. When the client reports another model, the returned text names that one, and `modelCorrection` is `{ posted, reported }` so the lead fixes the posted comment's Model line.
 
@@ -61,19 +63,19 @@ A success has `critic`, `mode` (`other`, `same` or `named`), `ticket`, `subject`
 | Failure | Meaning |
 |---|---|
 | `usage` | A missing or bad option, or a file or folder that cannot be read. |
-| `critic-unavailable` | The client is not found, not signed in with a subscription, has no Linear server or is not signed in to it, or Codex could not switch off its other MCP servers. Nothing else is tried. `fix` says what to do. |
+| `critic-unavailable` | The client is not found, not signed in with a subscription, or has no Linear server that is connected and signed in. Or Claude Code's user settings set a key or a provider route or let the critic read outside its folder, or Codex could not switch off its other MCP servers. Nothing else is tried. `fix` says what to do. |
 | `critic-busy` | Another call for this ticket, provider and mode is running. The detail names its lock folder. |
 | `round-mismatch` | The round is not the next one. `expected` says which is. No client runs. |
 | `state` | The saved critic state cannot be read. |
 | `session-missing` | The client lost the session. Retry with `--new-session`. |
-| `board-unreachable` | The critic did not read the issue and its comments. The round is not counted. |
+| `board-unreachable` | The critic did not read the issue and its comments. The round is not counted unless the critic posted a critique anyway. |
 | `critic-used-tools` | The critic was given or used a tool, an MCP server or a connector it is not allowed. The reply was not used. |
 | `timeout` | No answer within `--timeout`. `seconds` says how long. |
 | `client-error` | The client reported an error. Quota and usage limits arrive this way. |
-| `exit` | The client exited abnormally or did not start. A critique that arrived first is in `receivedReview` and is not a round. |
+| `exit` | The client exited abnormally or did not start. A critique that arrived first is in `receivedReview`, which says whether it was `counted`. |
 | `empty-answer`, `malformed-answer` | The reply was empty, or does not start with `Critique of ` or has no `Verdict:` line. `head` shows its start. |
 
-`board-unreachable`, `empty-answer` and `malformed-answer` carry `posted`, and so does a `receivedReview`, so the lead knows whether a comment was left anyway.
+Every failure after the critic started carries `posted`, and so does a `receivedReview`, so the lead knows whether a comment was left anyway. `counted: true` says the posted comment was a well formed critique and its round is counted.
 
 ## Tickets and runs
 
