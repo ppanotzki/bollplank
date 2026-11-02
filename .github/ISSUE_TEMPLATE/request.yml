@@ -1,0 +1,25 @@
+name: Request
+description: A change or an addition to Bollplank.
+labels: [request]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A maintainer takes an accepted request into the project's own tracker as a ticket and links it here.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to do, and where Bollplank gets in the way or falls short.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you propose
+      description: The change you have in mind, if you have one.
+  - type: input
+    id: version
+    attributes:
+      label: Bollplank version
+      description: What `bollplank version` prints, if you have it installed.
