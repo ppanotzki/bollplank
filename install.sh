@@ -3,23 +3,32 @@
 # ~/.local/bin, says how to put that folder on PATH when it is not, and runs `bollplank init`.
 # It never replaces a file or a link that is not its own. Running it again is safe.
 #
-#   ./install.sh            install, then run bollplank init
-#   ./install.sh --no-init  install only
+#   ./install.sh                      install, then run bollplank init
+#   ./install.sh --no-init            install only
+#   ./install.sh -- <init options>    install, then run bollplank init with those options,
+#                                     such as --answers <file> for an unattended setup
 set -euo pipefail
 
 run_init=1
-for arg in "$@"; do
-  case "$arg" in
+init_args=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
     --no-init) run_init=0 ;;
+    --)
+      shift
+      init_args=("$@")
+      break
+      ;;
     -h|--help)
-      echo "usage: install.sh [--no-init]"
+      echo "usage: install.sh [--no-init] [-- <bollplank init options>]"
       exit 0
       ;;
     *)
-      echo "Unknown option $arg. Usage: install.sh [--no-init]" >&2
+      echo "Unknown option $1. Usage: install.sh [--no-init] [-- <bollplank init options>]" >&2
       exit 2
       ;;
   esac
+  shift
 done
 
 if ! command -v git >/dev/null 2>&1; then
@@ -92,6 +101,7 @@ case ":$PATH:" in
 esac
 
 if [ "$run_init" = 1 ]; then
-  exec "$target" init
+  # init ends with doctor, so it runs with the link's folder on PATH as a new terminal will have it.
+  PATH="$bin_dir:$PATH" exec "$target" init ${init_args[@]+"${init_args[@]}"}
 fi
 echo "Installed. Run bollplank init to set it up."

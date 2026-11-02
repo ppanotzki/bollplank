@@ -2,7 +2,7 @@
 // No test runs a real client or makes a model call.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { sandbox, fakesSkip, bin } from './helpers.mjs';
 
@@ -90,6 +90,8 @@ if (args[0] === 'login' && args[1] === 'status') {
   process.exit(auth === 'out' ? 1 : 0);
 }
 if (args[0] === 'mcp') {
+  // The critic lists the configured servers to switch each one off. This fake has none.
+  if (args[1] === 'list') { console.log('[]'); process.exit(0); }
   if (args[1] === 'get') process.exit(added ? 0 : 1);
   if (args[1] === 'add') { fs.writeFileSync(path.join(state, 'codex-linear-added'), ''); process.exit(0); }
   if (args[1] === 'login') process.exit(0);
@@ -150,7 +152,7 @@ test('doctor passes on a healthy sandbox with --offline and skips the model call
   assert.equal(r.status, 0, r.stdout);
   assert.equal(r.json.ok, true);
   const c = byId(r);
-  for (const id of ['node', 'path', 'config', 'links', 'client.claude', 'client.codex', 'signin.claude', 'signin.codex', 'version.claude', 'version.codex', 'lock']) assert.equal(c[id]?.ok, true, id);
+  for (const id of ['node', 'path', 'config', 'links', 'skills.claude', 'skills.codex', 'client.claude', 'client.codex', 'signin.claude', 'signin.codex', 'version.claude', 'version.codex', 'lock']) assert.equal(c[id]?.ok, true, id);
   for (const id of ['linear.claude', 'linear.codex', 'critic.claude', 'critic.codex']) assert.equal(c[id].skipped, true, id);
   for (const check of r.json.checks) for (const k of ['ok', 'detail', 'fix']) assert.ok(k in check, `${check.id} has ${k}`);
   assert.match(c.lock.detail, /^free/);
@@ -182,13 +184,17 @@ test('doctor reports each failure with a fix and exits 1', { skip: fakesSkip }, 
   assert.equal(r.status, 1);
   assert.equal(r.json.ok, false);
   const c = byId(r);
-  for (const id of ['path', 'config', 'links', 'client.claude', 'client.codex']) {
+  for (const id of ['config', 'links', 'client.claude', 'client.codex']) {
     assert.equal(c[id].ok, false, id);
     assert.equal(c[id].required, true, id);
     assert.ok(c[id].fix, `${id} has a fix`);
   }
   assert.match(c.config.fix, /bollplank init/);
-  assert.match(c.path.fix, /export PATH/);
+  // The command off PATH only warns, with the exact line to add.
+  assert.equal(c.path.ok, false);
+  assert.equal(c.path.required, false);
+  assert.match(c.path.fix, /export PATH="\$HOME\/\.local\/bin:\$PATH"$/);
+  assert.match(c.path.detail, /run it as .*\/bin\/bollplank\./);
   const human = b.doctor(['--offline']);
   assert.equal(human.status, 1);
   assert.match(human.stdout, /FAIL  Config: .*\n {8}Fix: Run `bollplank init`\./);
@@ -210,5 +216,53 @@ test('doctor names a key sign in, a moved link and a held ship lock', { skip: fa
   assert.match(c['signin.codex'].fix, /codex login/);
   assert.equal(c.links.ok, false);
   assert.match(c.links.detail, /bollplank-brief: no longer a link/);
+  assert.equal(c['skills.claude'].ok, false);
+  assert.equal(c['skills.claude'].required, true);
+  assert.match(c['skills.claude'].fix, new RegExp(`Move ${link.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} away`));
+  assert.equal(c['skills.codex'].ok, true);
   assert.match(c.lock.detail, /held by ACME-7, session acme-session, for 3 minutes/);
+});
+
+test('doctor checks every kit skill in each client found, not only the recorded links', { skip: fakesSkip }, (t) => {
+  const b = box(t);
+  b.install();
+  // A skill link removed from the client and the record both, so the recorded links still pass.
+  const gone = join(b.s.codex, 'skills', 'bollplank-ship');
+  unlinkSync(gone);
+  const file = join(b.s.bollplank, 'install.json');
+  const record = JSON.parse(readFileSync(file, 'utf8'));
+  writeFileSync(file, JSON.stringify({ ...record, links: record.links.filter((l) => l.path !== gone) }));
+  // And a link to somewhere outside the kit.
+  const foreign = join(b.s.claude, 'skills', 'bollplank-accept');
+  unlinkSync(foreign);
+  mkdirSync(join(b.s.root, 'elsewhere'));
+  symlinkSync(join(b.s.root, 'elsewhere'), foreign);
+  record.links = record.links.filter((l) => l.path !== gone && l.path !== foreign);
+  writeFileSync(file, JSON.stringify(record));
+  const r = b.doctor(['--json', '--offline']);
+  assert.equal(r.status, 1, r.stdout);
+  const c = byId(r);
+  assert.equal(c.links.ok, true, c.links.detail);
+  assert.equal(c['skills.codex'].ok, false);
+  assert.equal(c['skills.codex'].detail, `${gone} is missing`);
+  assert.equal(c['skills.codex'].fix, `Run \`bollplank init\` to link ${gone}.`);
+  assert.equal(c['skills.claude'].ok, false);
+  assert.match(c['skills.claude'].detail, /bollplank-accept is a link to .*elsewhere, which is not this kit/);
+  assert.match(c['skills.claude'].fix, /bollplank-accept away, then run `bollplank init`/);
+});
+
+test('a corrupt install record fails the links check with the file named, never a crash', { skip: fakesSkip }, (t) => {
+  const b = box(t);
+  b.install();
+  writeFileSync(join(b.s.bollplank, 'install.json'), '{"links": [');
+  const r = b.doctor(['--json', '--offline']);
+  assert.equal(r.status, 1, r.stdout);
+  const c = byId(r);
+  assert.equal(c.links.ok, false);
+  assert.match(c.links.detail, /install\.json is not valid JSON/);
+  // init refuses to rewrite it, so the links it lists are not forgotten.
+  const file = join(b.s.root, 'answers.json');
+  const init = b.run(['init', '--answers', file, '--offline', '--json']);
+  assert.equal(init.json.failure, 'corrupt');
+  assert.equal(readFileSync(join(b.s.bollplank, 'install.json'), 'utf8'), '{"links": [');
 });

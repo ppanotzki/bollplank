@@ -332,3 +332,20 @@ test('the CLI routes configuration mode while repository init and deploy still w
   assert.equal(r.json.deploy.status, 'succeeded');
   assert.equal(JSON.parse(readFileSync(join(folder, '.run.json'))).deploys.length, 1);
 });
+
+test('a configuration run record that is not valid JSON is a corrupt failure through the CLI, never a crash', (t) => {
+  const s = sandbox();
+  t.after(s.clean);
+  const runs = join(s.root, 'ops-runs');
+  s.config({
+    approver: { name: 'Ada' },
+    board: { kind: 'linear' },
+    projects: { 'acme-ops': { mode: 'configuration', runs: true, source: join(s.root, 'ops'), tickets: runs, board: { teamId: 'synthetic-team', projectId: 'synthetic-project' }, allowedTickets: ['ACME-1'], targets: { internal: { id: 'synthetic' } }, runbook: 'docs/runbook.md', verificationChecks: ['hierarchy'] } },
+  });
+  mkdirSync(join(runs, 'ACME-1'), { recursive: true });
+  writeFileSync(join(runs, 'ACME-1', '.run.json'), '{"plan":');
+  const r = s.run(['run', 'show', 'acme-ops', 'ACME-1']);
+  assert.equal(r.status, 1, r.stdout);
+  assert.equal(r.json.failure, 'corrupt');
+  assert.match(r.json.detail, /ACME-1 run in .*ops-runs\/ACME-1 could not be read/);
+});

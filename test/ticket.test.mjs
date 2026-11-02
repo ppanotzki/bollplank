@@ -165,3 +165,65 @@ test('remove accepts work that landed on the base branch and a worktree that is 
   assert.equal(existsSync(join(folder, '.ticket.json')), false);
   assert.equal(f.repos['acme-web'].git('branch', '--list', 'acme-5-x'), '');
 });
+
+test('remove checks the ticket branch itself, also when the worktree is detached or gone', (t) => {
+  const f = setup(t);
+  f.ticket('create', 'acme-shop', 'ACME-6', '--slug', 'x', '--change', 'acme-web');
+  const folder = f.folder('ACME-6');
+  const wt = join(folder, 'acme-web');
+  writeFileSync(join(wt, 'work.txt'), 'work\n');
+  g(wt, 'add', 'work.txt');
+  g(wt, 'commit', '-q', '-m', 'work on the branch');
+  const tip = g(wt, 'rev-parse', 'HEAD');
+  // The worktree moves off the branch, so its HEAD is on the base, but the branch keeps the work.
+  g(wt, 'checkout', '-q', '--detach', 'origin/trunk');
+  let r = f.ticket('remove', 'acme-shop', 'ACME-6');
+  assert.equal(r.status, 1, r.stdout);
+  assert.deepEqual(r.json.refusals, ['acme-web branch acme-6-x: 1 commits not on trunk and no merged PR in the run record']);
+  // The worktree folder is gone, and the branch is still refused before any branch -D.
+  execFileSync('git', ['-C', f.repos['acme-web'].work, 'worktree', 'remove', '--force', wt]);
+  r = f.ticket('remove', 'acme-shop', 'ACME-6');
+  assert.equal(r.status, 1, r.stdout);
+  assert.match(r.json.refusals.join('\n'), /acme-web branch acme-6-x: 1 commits not on trunk/);
+  assert.equal(f.repos['acme-web'].git('rev-parse', 'refs/heads/acme-6-x'), tip);
+  // A merged head that is not the branch tip is refused. The branch tip itself is accepted.
+  writeFileSync(join(folder, '.run.json'), JSON.stringify({ repos: { 'acme-web': { merged: true, pr: 2, finalHead: f.repos['acme-web'].git('rev-parse', 'origin/trunk~0') } } }));
+  assert.match(f.ticket('remove', 'acme-shop', 'ACME-6').json.refusals[0], /acme-web branch acme-6-x: commits after the merged head/);
+  writeFileSync(join(folder, '.run.json'), JSON.stringify({ repos: { 'acme-web': { merged: true, pr: 2, finalHead: tip.toUpperCase() } } }));
+  r = f.ticket('remove', 'acme-shop', 'ACME-6');
+  assert.equal(r.status, 0, r.stdout);
+  assert.equal(f.repos['acme-web'].git('branch', '--list', 'acme-6-x'), '');
+});
+
+test('remove lists ignored files other than node_modules and deletes them only with --force-ignored', (t) => {
+  const f = setup(t);
+  f.ticket('create', 'acme-shop', 'ACME-7', '--slug', 'x', '--change', 'acme-api');
+  const wt = join(f.folder('ACME-7'), 'acme-api');
+  assert.ok(existsSync(join(wt, 'node_modules')));
+  // info/exclude is shared by every worktree of the repo.
+  writeFileSync(join(f.repos['acme-api'].work, '.git', 'info', 'exclude'), 'acme.env\nbuild/\n');
+  writeFileSync(join(wt, 'acme.env'), 'ACME_SETTING=1\n');
+  mkdirSync(join(wt, 'build'));
+  writeFileSync(join(wt, 'build', 'out.txt'), 'out\n');
+  let r = f.ticket('remove', 'acme-shop', 'ACME-7');
+  assert.equal(r.status, 1, r.stdout);
+  assert.deepEqual(r.json.ignored, { 'acme-api': ['acme.env', 'build/'] });
+  assert.match(r.json.refusals[0], /^acme-api: ignored files that removal would delete: acme\.env, build\/\. Move them away, or pass --force-ignored to delete them\.$/);
+  assert.ok(existsSync(join(wt, 'acme.env')));
+  r = f.ticket('remove', 'acme-shop', 'ACME-7', '--force-ignored');
+  assert.equal(r.status, 0, r.stdout);
+  assert.equal(existsSync(wt), false);
+});
+
+test('a ticket or run record that is not valid JSON is a corrupt failure, never a crash', (t) => {
+  const f = setup(t);
+  f.ticket('create', 'acme-shop', 'ACME-8', '--slug', 'x', '--change', 'acme-api');
+  writeFileSync(join(f.folder('ACME-8'), '.run.json'), '{"repos":');
+  let r = f.ticket('remove', 'acme-shop', 'ACME-8');
+  assert.equal(r.json.failure, 'corrupt');
+  assert.equal(r.json.file, join(f.folder('ACME-8'), '.run.json'));
+  writeFileSync(join(f.folder('ACME-8'), '.ticket.json'), 'not json');
+  r = f.ticket('status', 'acme-shop', 'ACME-8');
+  assert.equal(r.json.failure, 'corrupt');
+  assert.match(r.json.detail, /\.ticket\.json is not valid JSON/);
+});

@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { sandbox, acmeConfig } from './helpers.mjs';
+import { sandbox, acmeConfig, bin } from './helpers.mjs';
 
 // What agent-workflow's aw-turn does with the same folder: mkdir the lock, then write holder.json
 // with { ticket, session, since, pid }. A take that finds the folder reads the holder instead.
@@ -90,4 +91,24 @@ test('turn without a config uses the default lock in the Bollplank home, and che
   assert.equal(s.run(['turn', 'take', 'not a ticket']).status, 2);
   assert.equal(s.run(['turn', 'grab', 'ACME-3']).status, 2);
   assert.equal(s.run(['turn', 'take', 'ACME-3', '--session']).status, 2);
+});
+
+test('relative paths in the config resolve against its folder, and a relative BOLLPLANK_HOME against the current folder', (t) => {
+  const s = sandbox();
+  t.after(s.clean);
+  s.config({ ...acmeConfig('code', 'Tickets'), shipLock: 'locks/ship.lock' });
+  const from = (cwd, extra = {}) => {
+    mkdirSync(cwd, { recursive: true });
+    const r = spawnSync(process.execPath, [bin, ...extra.args], { cwd, env: { ...s.env, ...extra.env }, encoding: 'utf8' });
+    return JSON.parse(r.stdout);
+  };
+  for (const cwd of [s.root, join(s.root, 'elsewhere', 'deeper')]) {
+    assert.equal(from(cwd, { args: ['turn', 'status'] }).lock, join(s.bollplank, 'locks', 'ship.lock'));
+    assert.equal(from(cwd, { args: ['run', 'show', 'acme-shop', 'ACME-1'] }).detail, `no run record at ${join(s.bollplank, 'Tickets', 'ACME-1', '.run.json')}`);
+  }
+  const relative = from(s.root, { args: ['turn', 'status'], env: { BOLLPLANK_HOME: join('home', '.bollplank') } });
+  // The current folder comes back as its real path, /private/var rather than /var on a Mac.
+  assert.equal(relative.lock, join(realpathSync(s.bollplank), 'locks', 'ship.lock'));
+  // An empty BOLLPLANK_HOME counts as not set.
+  assert.equal(from(s.root, { args: ['turn', 'status'], env: { BOLLPLANK_HOME: '' } }).lock, join(s.home, '.bollplank', 'locks', 'ship.lock'));
 });

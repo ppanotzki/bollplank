@@ -320,6 +320,24 @@ test('a turn without usage does not pull the next turn back in time', (t) => {
 test('only a successful deploy counts as shipped', (t) => {
   const { collect, runFolder } = fixture(t);
   assert.equal(collect('ACME-1', '--run', runFolder).shipped, at(14));
+  // succeeded is what run deploy records now. It counts, and the older values keep counting.
+  writeFileSync(join(runFolder, '.run.json'), JSON.stringify({ deploys: [{ at: at(14), status: 'SUCCEED' }, { at: at(17), status: 'succeeded' }, { at: at(18), status: 'timeout' }, { at: at(19), status: 'running' }] }));
+  assert.equal(collect('ACME-1', '--run', runFolder).shipped, at(17));
+});
+
+test('a run record or rollup store that is not valid JSON is a corrupt failure naming the file', (t) => {
+  const { ledger, runFolder, s } = fixture(t);
+  writeFileSync(join(runFolder, '.run.json'), '{"deploys":');
+  let r = ledger('collect', 'ACME-1', '--created', at(9), '--approved', at(12), '--done', at(20), '--run', runFolder);
+  assert.equal(r.status, 1, r.stdout);
+  assert.equal(r.json.failure, 'corrupt');
+  assert.equal(r.json.file, join(runFolder, '.run.json'));
+  const store = join(s.bollplank, 'ledger');
+  mkdirSync(store, { recursive: true });
+  writeFileSync(join(store, 'rollup.json'), 'not json');
+  r = ledger('rollup', '--json');
+  assert.equal(r.json.failure, 'corrupt');
+  assert.equal(r.json.file, join(store, 'rollup.json'));
 });
 
 test('mark never fails, even when the store cannot be written', (t) => {

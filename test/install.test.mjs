@@ -73,3 +73,24 @@ test('install.sh stops with the fix when Node is older than 20, and rejects an u
   assert.equal(u.status, 2);
   assert.match(u.stderr, /Unknown option --acme/);
 });
+
+test('install.sh runs init with the command folder on PATH, so the first doctor finds bollplank', { skip }, (t) => {
+  const b = box(t);
+  b.s.fake('claude', `
+const args = process.argv.slice(2);
+if (args[0] === '--version') { console.log('2.1.312 (Claude Code)'); process.exit(0); }
+if (args[0] === 'auth') { console.log(JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', apiProvider: 'firstParty', subscriptionType: 'pro' })); process.exit(0); }
+process.exit(2);
+`);
+  const answers = join(b.s.root, 'answers.json');
+  writeFileSync(answers, JSON.stringify({ approver: 'Ada', addProject: false, critic: 'claude' }));
+  const r = b.install(['--', '--answers', answers, '--offline', '--json']);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  // The PATH line is still printed for the person's own shell.
+  assert.match(r.stdout, /\.local\/bin is not on your PATH/);
+  const result = JSON.parse(r.stdout.slice(r.stdout.indexOf('\n{') + 1));
+  const path = result.doctor.checks.find((c) => c.id === 'path');
+  assert.equal(path.ok, true, path.detail);
+  assert.equal(path.detail, `${b.link}, a link into this kit`);
+  assert.equal(result.doctor.ok, true, JSON.stringify(result.doctor.checks.filter((c) => c.ok === false)));
+});

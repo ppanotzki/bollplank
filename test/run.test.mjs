@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { sandbox, acmeConfig } from './helpers.mjs';
 
@@ -83,4 +83,37 @@ test('run refuses unknown commands, bad ticket ids and a missing record', (t) =>
   assert.equal(f.run('show', 'acme-shop', '../ACME-1').status, 2);
   assert.equal(f.run('show', 'nope', 'ACME-1').status, 2);
   assert.equal(f.run('show', 'acme-shop', 'ACME-1', '--bogus', 'x').status, 2);
+});
+
+test('run deploy accepts only the known kinds and the statuses deploy-wait reports', (t) => {
+  const f = setup(t);
+  f.ticketFolder();
+  f.run('init', 'acme-shop', 'ACME-1', '--review', 'none');
+  for (const kind of ['none', 'command', 'amplify', 'github-actions', 'merge', 'release']) {
+    for (const status of ['succeeded', 'failed', 'timeout', 'running']) {
+      const r = f.run('deploy', 'acme-shop', 'ACME-1', 'acme-api', '--kind', kind, '--status', status);
+      assert.equal(r.status, 0, `${kind} ${status}: ${r.stdout}`);
+    }
+  }
+  const kind = f.run('deploy', 'acme-shop', 'ACME-1', 'acme-api', '--kind', 'ftp', '--status', 'succeeded');
+  assert.equal(kind.status, 2);
+  assert.match(kind.json.detail, /--kind must be one of none, command, amplify, github-actions, merge, release/);
+  const status = f.run('deploy', 'acme-shop', 'ACME-1', 'acme-api', '--kind', 'amplify', '--status', 'SUCCEED');
+  assert.equal(status.status, 2);
+  assert.match(status.json.detail, /--status must be one of succeeded, failed, timeout, running/);
+  assert.equal(f.record().deploys.length, 6);
+});
+
+test('a run record that is not valid JSON is a corrupt failure, and saves leave no temporary file', (t) => {
+  const f = setup(t);
+  f.ticketFolder();
+  f.run('init', 'acme-shop', 'ACME-1', '--review', 'none');
+  f.run('log', 'acme-shop', 'ACME-1', '--event', 'one');
+  assert.deepEqual(readdirSync(f.folder).sort(), ['.run.json', '.ticket.json']);
+  writeFileSync(join(f.folder, '.run.json'), '{"stages":');
+  const r = f.run('show', 'acme-shop', 'ACME-1');
+  assert.equal(r.status, 1);
+  assert.equal(r.json.failure, 'corrupt');
+  assert.equal(r.json.file, join(f.folder, '.run.json'));
+  assert.doesNotMatch(r.stdout, /SyntaxError: .*\n\s+at /);
 });

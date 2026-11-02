@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { sandbox, gitRepo, acmeConfig, fakesSkip } from './helpers.mjs';
 
@@ -43,6 +43,7 @@ function setup(t, extra = {}) {
   g('commit', '-q', '-m', 'Add the feature');
   g('push', '-q', 'origin', 'HEAD:refs/pull/7/head');
   const head = execFileSync('git', ['-C', contrib, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  const out = (...a) => execFileSync('git', ['-C', contrib, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   assert.throws(() => api.git('cat-file', '-e', `${head}^{commit}`));
   const { planted, ...projectExtra } = extra;
   s.config(acmeConfig(source, join(s.root, 'tickets'), { 'acme-api': { github: 'acme/acme-api', checks: ['checks', 'lint'], baseBranch: 'main' } }, projectExtra));
@@ -54,20 +55,24 @@ function setup(t, extra = {}) {
     { name: 'checks', status: 'COMPLETED', conclusion: 'SUCCESS' },
     { name: 'lint', status: 'COMPLETED', conclusion: 'SUCCESS' },
   ];
-  const state = (pr = {}, more = {}) => writeFileSync(stateFile, JSON.stringify({ pr: { state: 'OPEN', isDraft: false, baseRefName: 'main', headRefOid: head, statusCheckRollup: green, ...pr }, ...more }));
+  const state = (pr = {}, more = {}) => writeFileSync(stateFile, JSON.stringify({ pr: { state: 'OPEN', isDraft: false, baseRefName: 'main', headRefOid: head, statusCheckRollup: green, title: 'Add the feature', body: 'Plain body.', ...pr }, ...more }));
   state();
   const runFolder = join(s.root, 'tickets', 'ACME-1');
-  const runRecord = (stages) => {
+  // The run record and the ticket folder record that ticket create writes.
+  const runRecord = (stages, run = {}, ticket = { project: 'acme-shop', ticket: 'ACME-1', repos: { 'acme-api': { kind: 'change' } } }) => {
     mkdirSync(runFolder, { recursive: true });
-    writeFileSync(join(runFolder, '.run.json'), JSON.stringify({ project: 'acme-shop', ticket: 'ACME-1', stages, repos: {} }));
+    writeFileSync(join(runFolder, '.run.json'), JSON.stringify({ project: 'acme-shop', ticket: 'ACME-1', stages, repos: {}, ...run }));
+    if (ticket) writeFileSync(join(runFolder, '.ticket.json'), JSON.stringify(ticket));
   };
   const env = { FAKE_GH_STATE: stateFile, FAKE_GH_LOG: logFile };
   const merge = (...a) => s.run(['merge', 'acme-shop', 'acme-api', '7', ...a], env);
-  const merged = () => readFileSync(logFile, 'utf8').split('\n').filter(Boolean).some((l) => JSON.parse(l)[1] === 'merge');
-  return { s, head, green, state, runFolder, runRecord, merge, merged };
+  const calls = () => readFileSync(logFile, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  const merged = () => calls().some((a) => a[1] === 'merge');
+  return { s, api, contrib, out, head, green, state, runFolder, runRecord, merge, merged, calls };
 }
 
-const stage = (selected, complete) => ({ selected, complete, rounds: [] });
+// A stage, with one round that reviewed revision when it is complete.
+const stage = (selected, complete, revision) => ({ selected, complete, rounds: revision ? [{ revision, verdict: 'Approve' }] : [] });
 
 test('merge refuses missing, unfinished and failed checks, drafts, closed PRs and the wrong base', { skip: fakesSkip }, (t) => {
   const f = setup(t);
@@ -104,6 +109,77 @@ test('merge with --run refuses an incomplete plan or code stage', { skip: fakesS
   assert.equal(f.merged(), false);
 });
 
+test('merge with --run refuses a record or ticket folder for another project, ticket or repo, and a corrupt record', { skip: fakesSkip }, (t) => {
+  const f = setup(t);
+  const done = { plan: stage(false, false), code: stage(false, false) };
+  const cases = [
+    [{ project: 'acme-other' }, undefined, /run record .* is for project acme-other, not acme-shop/],
+    [{}, null, /no ticket folder record/],
+    [{}, { project: 'acme-other', ticket: 'ACME-1', repos: { 'acme-api': { kind: 'change' } } }, /\.ticket\.json is for project acme-other/],
+    [{ ticket: 'ACME-2' }, undefined, /run record is for ACME-2 and the ticket folder for ACME-1/],
+    [{}, { project: 'acme-shop', ticket: 'ACME-1', repos: { 'acme-web': { kind: 'change' }, 'acme-api': { kind: 'validate' } } }, /acme-api is not a repo this ticket changes\. The ticket folder changes acme-web\./],
+  ];
+  for (const [run, ticket, detail] of cases) {
+    f.runRecord(done, run, ticket);
+    if (ticket === null) rmSync(join(f.runFolder, '.ticket.json'), { force: true });
+    const r = f.merge('--run', f.runFolder);
+    assert.equal(r.status, 1, r.stdout);
+    assert.equal(r.json.failure, 'run-mismatch');
+    assert.match(r.json.detail, detail);
+  }
+  writeFileSync(join(f.runFolder, '.run.json'), '{"project": "acme-shop",');
+  const r = f.merge('--run', f.runFolder);
+  assert.equal(r.json.failure, 'corrupt');
+  assert.equal(r.json.file, join(f.runFolder, '.run.json'));
+  assert.doesNotMatch(r.stdout, /at .*\.mjs:\d+/);
+  assert.equal(f.merged(), false);
+});
+
+test('merge with a code review merges a clean rebase of the approved change and refuses a changed one', { skip: fakesSkip }, (t) => {
+  const f = setup(t);
+  // The reviewed revision is on the ticket branch. Then the base moves and the PR is rebased.
+  f.out('push', '-q', 'origin', 'HEAD:refs/heads/acme-1-feature');
+  const approved = f.head;
+  f.api.commit('other.txt', 'other work\n');
+  f.api.git('push', '-q', 'origin', 'main');
+  f.out('fetch', '-q', 'origin');
+  f.out('rebase', '-q', 'origin/main');
+  f.out('push', '-q', '-f', 'origin', 'HEAD:refs/pull/7/head');
+  const rebased = f.out('rev-parse', 'HEAD');
+  assert.notEqual(rebased, approved);
+
+  // A change made after the review gives another patch id.
+  writeFileSync(join(f.contrib, 'feature.txt'), 'plain feature, changed after review\n');
+  f.out('commit', '-q', '-a', '--amend', '--no-edit');
+  f.out('push', '-q', '-f', 'origin', 'HEAD:refs/pull/7/head');
+  const changed = f.out('rev-parse', 'HEAD');
+  f.state({ headRefOid: changed });
+  f.runRecord({ plan: stage(false, false), code: stage(true, true, approved) });
+  let r = f.merge('--run', f.runFolder);
+  assert.equal(r.status, 1, r.stdout);
+  assert.equal(r.json.failure, 'review-stale');
+  assert.match(r.json.detail, /is not the change the last approved code round reviewed/);
+  assert.match(r.json.detail, /bollplank run reopen acme-shop ACME-1 code/);
+  assert.notEqual(r.json.review.approvedPatchId, r.json.review.headPatchId);
+  assert.equal(f.merged(), false);
+
+  // An approved revision git does not know is refused the same way.
+  f.runRecord({ plan: stage(false, false), code: stage(true, true, 'v3') });
+  r = f.merge('--run', f.runFolder);
+  assert.equal(r.json.failure, 'review-stale');
+  assert.match(r.json.detail, /names v3, which is not a commit/);
+
+  // The clean rebase carries the reviewed change, so it merges.
+  f.out('push', '-q', '-f', 'origin', `${rebased}:refs/pull/7/head`);
+  f.state({ headRefOid: rebased });
+  f.runRecord({ plan: stage(false, false), code: stage(true, true, approved) });
+  r = f.merge('--run', f.runFolder);
+  assert.equal(r.status, 0, r.stdout);
+  assert.equal(r.json.finalHead, rebased);
+  assert.equal(r.json.review.approved, approved);
+  assert.equal(r.json.review.approvedPatchId, r.json.review.headPatchId);
+});
+
 test('a gh failure comes back as JSON', { skip: fakesSkip }, (t) => {
   const f = setup(t);
   f.state({}, { fail: 'HTTP 401: Bad credentials' });
@@ -116,10 +192,15 @@ test('a gh failure comes back as JSON', { skip: fakesSkip }, (t) => {
 test('an ordinary project merges on green checks and complete stages with no names list, and records the merge', { skip: fakesSkip }, (t) => {
   const f = setup(t);
   assert.equal(existsSync(join(f.s.bollplank, 'private-names.txt')), false);
-  f.runRecord({ plan: stage(true, true), code: stage(true, true) });
+  // The approved revision is the PR head, reached through the ticket branch as a worktree would.
+  f.out('push', '-q', 'origin', 'HEAD:refs/heads/acme-1-feature');
+  f.runRecord({ plan: stage(true, true, 'v1'), code: stage(true, true, f.head) });
   const r = f.merge('--run', f.runFolder);
   assert.equal(r.status, 0, r.stdout);
   assert.equal(r.json.merged, true);
+  assert.equal(r.json.review.approvedPatchId, r.json.review.headPatchId);
+  // No scan, so GitHub writes its own squash message.
+  assert.equal(f.calls().find((a) => a[1] === 'merge').includes('--subject'), false);
   assert.equal(r.json.finalHead, f.head);
   assert.equal(r.json.mergeCommit, 'f'.repeat(40));
   assert.equal(r.json.privateScan, undefined);
@@ -151,13 +232,33 @@ test('a privateScan project refuses a PR head with a listed name and never print
   assert.equal(f.merged(), false);
 });
 
-test('a privateScan project merges when the scan of the PR head passes', { skip: fakesSkip }, (t) => {
+test('a privateScan project merges when the scan of the PR head passes, with the scanned title and body as the message', { skip: fakesSkip }, (t) => {
   const f = setup(t, { privateScan: true });
   writeFileSync(join(f.s.bollplank, 'private-names.txt'), 'zorblax\n');
   const r = f.merge();
   assert.equal(r.status, 0, r.stdout);
   assert.equal(r.json.privateScan.outcome, 'passed');
+  assert.equal(r.json.messageScan.outcome, 'passed');
   assert.equal(f.merged(), true);
+  const call = f.calls().find((a) => a[1] === 'merge');
+  assert.equal(call[call.indexOf('--subject') + 1], 'Add the feature (#7)');
+  assert.equal(call[call.indexOf('--body') + 1], 'Plain body.');
+  assert.ok(call.includes('--squash'));
+});
+
+test('a privateScan project refuses a PR title or body with a listed name and never prints it', { skip: fakesSkip }, (t) => {
+  const f = setup(t, { privateScan: true });
+  writeFileSync(join(f.s.bollplank, 'private-names.txt'), 'zorblax\n');
+  for (const pr of [{ title: 'Add the Zorblax feature' }, { body: 'Asked for by\nZorblax Industries.' }]) {
+    f.state(pr);
+    const r = f.merge();
+    assert.equal(r.status, 1, r.stdout);
+    assert.equal(r.json.failure, 'private-scan');
+    assert.equal(r.json.messageScan.outcome, 'failed');
+    assert.deepEqual(r.json.messageScan.hits.map((h) => h.where), [Object.keys(pr)[0]]);
+    assert.ok(!r.stdout.toLowerCase().includes('zorblax'));
+  }
+  assert.equal(f.merged(), false);
 });
 
 test('merge checks its arguments', (t) => {

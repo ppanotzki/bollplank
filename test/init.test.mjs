@@ -5,10 +5,10 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { sandbox, fakesSkip, kit } from './helpers.mjs';
+import { sandbox, fakesSkip, gitRepo, kit } from './helpers.mjs';
 import * as claude from '../lib/providers/claude.mjs';
 import * as codex from '../lib/providers/codex.mjs';
-import { judge, jsonIn, LINEAR_MCP_URL, LINEAR_PROBE_PROMPT } from '../lib/setup/probe.mjs';
+import { isReadTool, judge, jsonIn, LINEAR_MCP_URL, LINEAR_PROBE_PROMPT, readOnlyLinearTools } from '../lib/setup/probe.mjs';
 import { githubSlug } from '../lib/commands/init.mjs';
 
 // What a Linear tool returns for the synthetic workspace. FAKE_STATUSES replaces the status list.
@@ -196,6 +196,30 @@ test('judge passes only on a real Linear tool call and keeps only what the tool 
   assert.match(judge('Acme client', [tool], 'I listed the teams.').detail, /did not reply with the JSON/);
 });
 
+test('the probe allows only Linear tools that list, get, search or read, and fails on a write', () => {
+  const tools = [
+    'mcp__claude_ai_Linear__list_teams',
+    'mcp__claude_ai_Linear__get_issue',
+    'mcp__claude_ai_Linear__search_documentation',
+    'mcp__claude_ai_Linear__save_issue',
+    'mcp__claude_ai_Linear__create_comment',
+    'mcp__claude_ai_Linear__delete_comment',
+    'mcp__linear__listIssueStatuses',
+    'mcp__acme_files__read_file',
+    'Bash',
+  ];
+  assert.deepEqual(readOnlyLinearTools(tools), ['mcp__claude_ai_Linear__list_teams', 'mcp__claude_ai_Linear__get_issue', 'mcp__claude_ai_Linear__search_documentation', 'mcp__linear__listIssueStatuses']);
+  assert.equal(isReadTool('codex_apps/linear_list_teams'), true);
+  assert.equal(isReadTool('codex_apps/linear_save_issue'), false);
+  assert.equal(isReadTool('linear/update_issue'), false);
+  const reply = JSON.stringify({ teams: [{ key: 'ACME', name: 'Acme' }] });
+  const read = { name: 'mcp__linear__list_teams', ok: true, text: '{"teams":[{"key":"ACME","name":"Acme"}]}' };
+  assert.equal(judge('Acme client', [read], reply).ok, true);
+  const wrote = judge('Acme client', [read, { name: 'mcp__linear__save_issue', ok: true, text: '{}' }], reply);
+  assert.equal(wrote.ok, false);
+  assert.match(wrote.detail, /called mcp__linear__save_issue, which may change Linear\. The probe allows only tools that list, get, search or read\./);
+});
+
 test('the Claude probe passes on a real tool call through a connector and fails on a claimed one', { skip: fakesSkip }, (t) => {
   const b = box(t, { clients: ['claude'] });
   const bin = join(b.s.fakes, 'claude');
@@ -314,6 +338,24 @@ test('init leaves a file and a foreign link in the skills folders alone and repo
   assert.match(text(r), /Left .*bollplank-run alone\. It is a link to .*elsewhere, which is not this kit/);
   const install = JSON.parse(readFileSync(join(b.s.bollplank, 'install.json'), 'utf8'));
   assert.equal(install.links.some((l) => l.path === own), false);
+});
+
+test('init with a source folder that is itself a repo saves its parent and the repo name, and ticket create works', { skip: fakesSkip }, (t) => {
+  const b = box(t);
+  const solo = gitRepo(join(b.s.root, 'code', 'solo'), 'acme-solo', 'main');
+  solo.commit('README.md', 'Acme solo\n');
+  solo.git('push', '-q', '-u', 'origin', 'main');
+  const tickets = join(b.s.root, 'code', 'solo', 'Tickets');
+  const r = b.init({ approver: 'Ada', addProject: true, source: solo.work, projectName: 'acme-solo', tickets, github: { 'acme-solo': 'acme/acme-solo' }, baseBranch: { 'acme-solo': 'main' } });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const p = b.config().projects['acme-solo'];
+  assert.equal(p.source, join(b.s.root, 'code', 'solo'));
+  assert.deepEqual(Object.keys(p.repos), ['acme-solo']);
+  assert.match(text(r), /acme-solo is a git repo, so the project's source folder is .*solo and its repo is acme-solo/);
+  const created = b.s.run(['ticket', 'create', 'acme-solo', 'ACME-1', '--slug', 'first', '--change', 'acme-solo']);
+  assert.equal(created.status, 0, created.stdout);
+  assert.equal(created.json.repos['acme-solo'].baseBranch, 'main');
+  assert.ok(existsSync(join(tickets, 'ACME-1', 'acme-solo', 'README.md')));
 });
 
 test('init keeps a backup and rewrites nothing without a yes', { skip: fakesSkip }, (t) => {

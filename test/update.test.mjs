@@ -28,11 +28,14 @@ function box(t) {
   for (const p of ['bin', 'lib', 'skills', 'package.json']) cpSync(join(kit, p), join(dev, p), { recursive: true });
   git(dev, 'init', '-q', '-b', 'main');
   git(dev, 'remote', 'add', 'origin', origin);
-  const release = (v, versions) => {
+  // Each release sets the version in package.json, as a real release does. tag false commits
+  // the version without a release tag, as work after a release does.
+  const release = (v, versions, tag = true) => {
     writeFileSync(join(dev, 'CHANGELOG.md'), CHANGELOG(versions));
+    writeFileSync(join(dev, 'package.json'), JSON.stringify({ name: 'bollplank', version: v.slice(1), private: true, type: 'module' }) + '\n');
     git(dev, 'add', '-A');
     git(dev, 'commit', '-q', '-m', `release ${v}`);
-    git(dev, 'tag', v);
+    if (tag) git(dev, 'tag', v);
     git(dev, 'push', '-q', 'origin', 'main', '--tags');
   };
   release('v0.1.0', ['0.1.0']);
@@ -40,8 +43,8 @@ function box(t) {
   execFileSync('git', ['clone', '-q', origin, copy]);
   git(copy, 'checkout', '-q', '--detach', 'v0.1.0');
   s.fake('claude', FAKE_CLAUDE);
-  const update = (args = ['--json']) => {
-    const r = spawnSync(process.execPath, [join(copy, 'bin', 'bollplank'), 'update', ...args], { env: s.env, encoding: 'utf8', timeout: 60000 });
+  const update = (args = ['--json'], at = copy) => {
+    const r = spawnSync(process.execPath, [join(at, 'bin', 'bollplank'), 'update', ...args], { env: s.env, encoding: 'utf8', timeout: 60000 });
     let json = null;
     try {
       json = JSON.parse(r.stdout);
@@ -86,4 +89,52 @@ test('update refuses a kit with local changes and says when the changelog has no
   assert.equal(b.git(b.copy, 'rev-parse', 'HEAD'), b.git(b.copy, 'rev-parse', 'v0.1.0^{commit}'));
   assert.equal(existsSync(join(b.s.claude, 'skills')), false);
   assert.equal(changelog(b.copy, 'v9.9.9'), null);
+});
+
+test('update never goes back from a kit ahead of the newest release, and skips pre-releases unless --pre', { skip: fakesSkip }, (t) => {
+  const b = box(t);
+  b.release('v0.2.0', ['0.2.0', '0.1.0']);
+  b.release('v0.3.0', ['0.3.0', '0.2.0', '0.1.0'], false);
+  b.git(b.copy, 'fetch', '-q', 'origin');
+  b.git(b.copy, 'checkout', '-q', '--detach', 'origin/main');
+  const head = b.git(b.copy, 'rev-parse', 'HEAD');
+  let r = b.update();
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(r.json.installed, '0.3.0');
+  assert.equal(r.json.tag, 'v0.2.0');
+  assert.equal(r.json.ahead, true);
+  assert.equal(r.json.already, true);
+  assert.equal(r.json.to, head);
+  assert.equal(b.git(b.copy, 'rev-parse', 'HEAD'), head);
+  assert.match(b.update([]).stdout, /Bollplank 0\.3\.0 is ahead of the newest release, v0\.2\.0, so update left it where it is\./);
+
+  // A pre-release is newer, and taken only with --pre.
+  b.release('v0.4.0-rc.1', ['0.4.0-rc.1', '0.3.0']);
+  r = b.update();
+  assert.equal(r.json.tag, 'v0.2.0');
+  assert.equal(b.git(b.copy, 'rev-parse', 'HEAD'), head);
+  r = b.update(['--pre', '--json']);
+  assert.equal(r.status, 0, r.stdout);
+  assert.equal(r.json.tag, 'v0.4.0-rc.1');
+  assert.equal(r.json.already, false);
+  assert.equal(b.git(b.copy, 'rev-parse', 'HEAD'), b.git(b.copy, 'rev-parse', 'v0.4.0-rc.1^{commit}'));
+});
+
+test('update refuses a kit folder inside another repo instead of moving that repo', { skip: fakesSkip }, (t) => {
+  const b = box(t);
+  const outer = join(b.s.root, 'acme-monorepo');
+  const inner = join(outer, 'tools', 'bollplank');
+  mkdirSync(inner, { recursive: true });
+  for (const p of ['bin', 'lib', 'skills', 'package.json']) cpSync(join(kit, p), join(inner, p), { recursive: true });
+  b.git(outer, 'init', '-q', '-b', 'main');
+  b.git(outer, 'add', '-A');
+  b.git(outer, 'commit', '-q', '-m', 'vendored kit');
+  b.git(outer, 'tag', 'v9.0.0');
+  const before = b.git(outer, 'rev-parse', 'HEAD');
+  const r = b.update(['--json'], inner);
+  assert.equal(r.status, 1, r.stdout);
+  assert.equal(r.json.failure, 'not-a-checkout');
+  assert.match(r.json.detail, /is inside the git checkout .*acme-monorepo, not a checkout of its own/);
+  assert.equal(b.git(outer, 'rev-parse', 'HEAD'), before);
+  assert.equal(b.git(outer, 'rev-parse', '--abbrev-ref', 'HEAD'), 'main');
 });
