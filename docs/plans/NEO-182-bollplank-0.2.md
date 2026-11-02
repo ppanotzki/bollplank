@@ -1,7 +1,7 @@
 # NEO-182 implementation plan: Bollplank 0.2.0
 
-Plan v5
-Status: Revised after Codex's plan v4 round (five points accepted), for the next round
+Plan v6
+Status: Revised after Codex's plan v5 round (two points accepted), for the next round
 Ticket: NEO-182, brief v10, approved 2026-11-02, Cross-model review both
 Responsible: Claude Code
 Model: Claude Opus 5.5
@@ -42,7 +42,7 @@ The critic reads the issue and its comments itself and posts its own critique, a
 
 ## 3. Board setup on request (decision 18)
 
-* **Create a project.** In init step 3 and step 5, when the named Linear project does not exist in the team read, init asks "Create the Linear project <name> in <team>?" (default no). On yes it runs one write call through Claude Code, allowed only Linear tools whose name is `save_project` or `create_project` (with or without a `linear_` prefix), with the same isolation as the probe otherwise. Allow rules cannot check arguments, and Linear's `save_project` also updates an existing project when given an id, so the call also gets a `PreToolUse` hook through `--settings`. The hook is a small Node script in Bollplank that runs before every tool call and denies it unless: the tool is one of those two, the input has no `id`, the project name equals the confirmed name, the team list names only the confirmed team (by its key, name or id from the read), and no earlier call in this run succeeded. So an update to another project never runs, even if a later readback finds the new one. Init then reads Linear again with the read only probe and continues only when the project is there. Codex has no such pre call check for MCP arguments, so with only Codex installed init gives the steps to create the project in Linear instead. Answers file key `createProject.<team>.<project>`.
+* **Create a project.** In init step 3 and step 5, when the named Linear project does not exist in the team read, init asks "Create the Linear project <name> in <team>?" (default no). On yes it runs one write call through Claude Code, allowed only Linear tools whose name is `save_project` or `create_project` (with or without a `linear_` prefix), with the same isolation as the probe otherwise. Allow rules cannot check arguments, and Linear's `save_project` also updates an existing project when given an id, so the call also gets a `PreToolUse` hook through `--settings`. The hook is a small Node script in Bollplank that runs before every tool call and denies it unless: the tool is one of those two, the input has no `id`, the project name equals the confirmed name, the team list names only the confirmed team (by its key, name or id from the read), and no earlier call in this run succeeded. So an update to another project never runs, even if a later readback finds the new one. Init then reads Linear again with the read only probe and continues only when the project is there. With only Codex, the same call runs through Codex with its Linear server limited to `save_project` and `create_project` through `enabled_tools`, and the same check as a `PreToolUse` hook through Codex's hooks feature (stable in 0.166), set for that call only. Step 3 starts by checking the real Codex: a hook that denies every call must see a Linear MCP call with its arguments and stop it, so nothing is written. Bollplank never passes `--dangerously-bypass-hook-trust`. If Codex's hooks cannot see or stop MCP calls, or cannot be trusted for one call without that flag, the Codex path gives the steps to create the project in Linear, the brief gets a Known edge cases line for it, and Paul is told before the merge. The guide names this prerequisite. Answers file key `createProject.<team>.<project>`.
 * **Statuses.** Linear's MCP server has no tool to create a status. For each missing status init gives the steps in Linear's settings (Settings, Teams, the team, Workflow, the status group) and offers to read again, as today, up to three times.
 * `judge()` and the read only probe are unchanged. The write call has its own judge: at most one allowed call, all others denied by the hook, and a readback that shows the project.
 
@@ -73,12 +73,14 @@ Steps 1 and 3 touch `init.mjs` both, so they run in order, not in parallel. Docs
 
 ## 7. Acceptance cases
 
-* A Claude and a Codex critic, faked, each call a Linear read and a comment tool and pass. A call to another server's tool, a shell call, or an MCP server that is not Linear fails as `critic-used-tools`.
+* A Claude and a Codex critic, faked, each call a Linear read and a comment tool and pass. For either, a call to another server's tool or an MCP server that is not Linear fails as `critic-used-tools`.
+* A Claude critic's shell call fails as `critic-used-tools`. A Codex critic's command passes, and its argv carries the read only sandbox, `approval_policy=never` and no network, so writes, network and escalation stay blocked. No flag that bypasses approvals or the sandbox is ever on the argv.
 * `posted` is true only after a successful comment call. The skill text says the lead posts the returned text when the comment is missing.
 * `--instruction-file` text reaches the prompt under the approver line, and an empty one leaves `{INSTRUCTION}` empty.
 * No Linear server in the critic's client fails as `critic-unavailable` before any model turn.
 * Two projects in different teams with different status names validate, `context` returns each project's own mapping, and doctor checks each against its own team.
 * A project with no mapping of its own uses the top level one, and with none at all, Linear's suggestion.
+* Init with only Codex creates and reads back the confirmed project when its hook check passed, and the same hook cases deny.
 * Init with an answers file creates a missing project only on `createProject` yes, allows only the create project tool, and reads it back. A no leaves Linear untouched.
 * The hook denies `save_project` with an `id`, with another name, with another team or a second team, and a second create, and allows exactly the confirmed create. A fake Claude that tries an update first never gets it run.
 * A critic that never read the issue, or whose read failed, fails as `board-unreachable` and the round count stays. A critic that read the subject but whose post failed returns `posted: false` and counts.
