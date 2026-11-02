@@ -4,7 +4,7 @@ Bollplank is untested on Windows beyond CI. Nobody has installed or used it ther
 
 ## What CI covers
 
-The `checks` workflow runs the gate on Windows with Node 20 and 22, as it does on Ubuntu and macOS. On Windows, the tests that put fake `claude`, `codex`, `gh` or `aws` programs on `PATH` are skipped, because those fakes are Node scripts with a shebang, which Windows does not run from `PATH`. These test files skip their fake program tests there:
+The `checks` workflow runs the gate on Windows with Node 20 and 22, as it does on Ubuntu. macOS runs the gate locally instead. On Windows, the tests that put fake `claude`, `codex`, `gh` or `aws` programs on `PATH` are skipped, because those fakes are Node scripts with a shebang, which Windows does not run from `PATH`. These test files skip their fake program tests there:
 
 - `test/critic.test.mjs`: every test that runs a fake client. Only the provider index, the environment scrub, the session roots and the shipped prompts are tested on Windows.
 - `test/merge.test.mjs`: every test but `merge checks its arguments`.

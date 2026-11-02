@@ -1,7 +1,8 @@
 # Bollplank's merge gate. Runs on every PR and always reports, so a missing result means the check
 # did not run. A ticket run never merges without it. The private name check needs the
 # BOLLPLANK_PRIVATE_NAMES secret, which pull requests from forks do not get, so their check fails
-# until a maintainer runs it with the list.
+# until a maintainer runs it with the list. macOS is left out because GitHub often has no macOS
+# runner free for a long time. Maintainers work on macOS and run the gate there before every PR.
 name: checks
 on:
   pull_request:
@@ -13,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest]
         node: [20, 22]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
