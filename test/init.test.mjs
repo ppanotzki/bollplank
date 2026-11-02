@@ -232,7 +232,7 @@ test('the Claude probe passes on a real tool call through a connector and fails 
   assert.deepEqual(real.teams.map((x) => x.key), ['ACME']);
   assert.deepEqual(real.teams[0].statuses, ['Backlog', 'Draft', 'Ready', 'In Progress', 'Acceptance', 'Done']);
   const probe = b.calls().find((c) => c.args[0] === '-p' && c.prompt);
-  assert.equal(probe.args[probe.args.indexOf('--allowedTools') + 1], 'mcp__claude_ai_Linear__list*,mcp__claude_ai_Linear__get*,mcp__claude_ai_Linear__search*,mcp__claude_ai_Linear__read*');
+  assert.equal(probe.args[probe.args.indexOf('--allowedTools') + 1], 'mcp__claude_ai_Linear__list*,mcp__claude_ai_Linear__linear_list*,mcp__claude_ai_Linear__get*,mcp__claude_ai_Linear__linear_get*,mcp__claude_ai_Linear__search*,mcp__claude_ai_Linear__linear_search*,mcp__claude_ai_Linear__read*,mcp__claude_ai_Linear__linear_read*');
   assert.equal(probe.args[probe.args.indexOf('--tools') + 1], '');
   assert.ok(probe.args.includes('--no-session-persistence'));
   assert.match(probe.prompt, /Bollplank setup check/);

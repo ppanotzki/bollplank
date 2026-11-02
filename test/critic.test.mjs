@@ -260,7 +260,7 @@ test('same with only one client works, is labelled, and uses the same model sett
   assert.equal(r.status, 0, r.stdout);
   assert.equal(r.json.critic, 'claude');
   assert.equal(r.json.mode, 'same');
-  assert.equal(r.json.model, 'claude-acme-same, max');
+  assert.equal(r.json.model, 'claude-acme-same-20261101, max');
   const call = b.reviews().at(-1);
   assert.match(call.prompt, /^Reviewer: Claude Code, same provider, separate session$/m);
   assert.match(call.prompt, /^Model: claude-acme-same, max$/m);
@@ -628,18 +628,18 @@ test('the header is the wrapper\'s: wrong lines are rewritten and missing ones i
   const lines = r.json.text.split('\n');
   assert.equal(lines[0], 'Critique of ACME-1 brief v1');
   assert.equal(lines[1], 'Reviewer: Claude Code');
-  assert.equal(lines[2], 'Model: claude-acme, high');
+  assert.equal(lines[2], 'Model: claude-acme-20261101, high');
   assert.match(lines[3], /^Workflow: Bollplank /);
   assert.equal(lines[4], 'Date: 2026-11-02');
   assert.ok(lines.includes('Model: a quoted line in the body stays.'));
-  assert.equal(r.json.model, 'claude-acme, high');
+  assert.equal(r.json.model, 'claude-acme-20261101, high');
   const header = 'Critique of ACME-1 brief v1\nWorkflow: made up\nReviewer: made up\nVerdict: Approve';
   const again = b.call({ lead: 'codex', round: 2 }, { FAKE_TEXT: header });
   const top = again.json.text.split('\n');
   assert.deepEqual(top.slice(0, 2), ['Critique of ACME-1 brief v1', 'Workflow: ' + lines[3].slice(10)]);
   // Model goes after Reviewer, the line before it in the order.
   assert.equal(top[2], 'Reviewer: Claude Code');
-  assert.equal(top[3], 'Model: claude-acme, high');
+  assert.equal(top[3], 'Model: claude-acme-20261101, high');
 });
 
 test('an unverified model is posted as Unverified, and a pinned one is never doubled', { skip: fakesSkip }, (t) => {
@@ -652,8 +652,8 @@ test('an unverified model is posted as Unverified, and a pinned one is never dou
   const claudeRun = b.call({ lead: 'codex' }, { FAKE_MODE: 'no-model' });
   assert.equal(claudeRun.json.model, 'claude-acme, max');
   const ran = b.call({ lead: 'codex', round: 2 });
-  assert.equal(ran.json.model, 'claude-acme, max');
-  assert.ok(ran.json.text.split('\n').includes('Model: claude-acme, max'));
+  assert.equal(ran.json.model, 'claude-acme-20261101, max');
+  assert.ok(ran.json.text.split('\n').includes('Model: claude-acme-20261101, max'));
 });
 
 for (const critic of ['claude', 'codex']) {
