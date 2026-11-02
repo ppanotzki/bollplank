@@ -49,7 +49,7 @@ Plan v5 to v8 tried a headless write call from init, guarded by hooks and permis
   * **Check the statuses.** Read the team's statuses and compare them with the project's mapping from `bollplank context <project>`. Linear's MCP server cannot create a status, so give the steps in Linear's settings for each one missing.
 * **Init**, when the named Linear project is missing from the team read, offers three choices: pick another project, create it now from your Claude Code or Codex session (init prints the sentence to type, such as "Create the Linear project Acme Shop in team ACME", and waits), or create it in Linear yourself (init prints the steps). After either create choice it reads Linear again with the read only probe and continues only when the project is there, up to three tries, as for a status. Answers file key `missingProject.<team>.<project>` with `other`, `session` or `linear`, so tests and scripted setups never wait.
 * **Statuses** stay as today: the steps in Linear's settings and a fresh read, up to three times.
-* `judge()`, the read only probe and every headless call stay read only. No Bollplank command starts a write to the board.
+* `judge()` and the read only probe stay read only. No setup command (`init`, `doctor`, `update`, `uninstall`) starts a write to the board. The only headless board writes are the critic's, under section 1.
 
 ## 4. Docs (Phase 5)
 
@@ -86,7 +86,7 @@ Steps 1 and 3 touch `init.mjs` both, so they run in order, not in parallel. Docs
 * Two projects in different teams with different status names validate, `context` returns each project's own mapping, and doctor checks each against its own team.
 * A project with no mapping of its own uses the top level one, and with none at all, Linear's suggestion.
 * Init with a missing project and `missingProject` set to `session` or `linear` prints the sentence or the steps, reads Linear again and continues once the project is there, and stops after three reads without it. With `other` it asks for another project.
-* No Bollplank command starts a board write: every headless call to a client is the read only probe or a critic, and a test checks that init's argv for each client never allows a tool that is not a read.
+* No setup command starts a board write: a test checks that every client call init and doctor make is the read only probe or a critic dry run, whose argv never allows a tool that is not a read.
 * The board skill text has the create a project operation with the confirmation, one create call without an existing id, and the readback, and the check the statuses operation.
 * A critic that never read the issue, or whose read failed, fails as `board-unreachable` and the round count stays. A critic that read the subject but whose post failed returns `posted: false` and counts.
 * A reported model that differs from the pinned one comes back as `modelCorrection` and in the returned header.
