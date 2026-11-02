@@ -101,7 +101,7 @@ if (args[0] === 'login' && args[1] === 'status') {
 if (args[0] === 'mcp') {
   // The critic and the probe list the configured servers to switch them off, and read back the
   // tools a kept server offers.
-  if (args[1] === 'list') { console.log(JSON.stringify(servers.map((name) => ({ name, enabled: !off(name) })))); process.exit(0); }
+  if (args[1] === 'list') { console.log(JSON.stringify(servers.map((name) => ({ name, enabled: !off(name), ...(name === "linear" && process.env.FAKE_LINEAR_AUTH ? { auth_status: process.env.FAKE_LINEAR_AUTH } : {}) })))); process.exit(0); }
   if (args[1] === 'get') {
     if (!servers.includes(args[2])) process.exit(1);
     console.log(JSON.stringify({ name: args[2], enabled: !off(args[2]), enabled_tools: allowed(args[2]), disabled_tools: null }));
@@ -271,10 +271,11 @@ test('the Claude probe passes on a real tool call through a connector and fails 
   assert.equal(probe.args[probe.args.indexOf('--tools') + 1], '');
   assert.ok(probe.args.includes('--no-session-persistence'));
   // Nothing outside the allowed reads can run: no prompt is answered, dontAsk denies the rest, and
-  // no user or project setting can allow another tool.
+  // every other MCP server is denied by name, which wins over an allow rule in the settings.
   assert.equal(probe.args[probe.args.indexOf('--permission-mode') + 1], 'dontAsk');
   assert.equal(probe.args[probe.args.indexOf('--permission-prompts') + 1], 'none');
-  assert.equal(probe.args[probe.args.indexOf('--setting-sources') + 1], 'local');
+  assert.equal(probe.args.includes('--setting-sources'), false);
+  assert.equal(probe.args[probe.args.indexOf('--disallowedTools') + 1], 'mcp__acme-files');
   assert.match(probe.prompt, /Bollplank setup check/);
   const claimed = claude.probeLinear({ bin, env: env('claimed'), cwd });
   assert.equal(claimed.ok, false);
@@ -305,7 +306,7 @@ test('the Codex probe passes on a real MCP tool call event and fails on a claime
   assert.ok(!probe.args.includes('mcp_servers.linear.enabled=false'));
   assert.ok(probe.args.includes(`mcp_servers.linear.enabled_tools=${JSON.stringify(CODEX_LINEAR_READ_TOOLS)}`));
   const before = b.calls().filter((c) => c.tool === 'codex' && c.args[0] === 'mcp').map((c) => c.args.slice(0, 3).join(' '));
-  assert.deepEqual(before, ['mcp list --json', 'mcp list --json', 'mcp get linear']);
+  assert.deepEqual(before, ['mcp list --json', 'mcp list --json', 'mcp get linear', 'mcp list --json']);
   assert.equal(codex.probeLinear({ bin, env: env('claimed'), cwd }).ok, false);
   const failed = codex.probeLinear({ bin, env: env('error'), cwd });
   assert.equal(failed.ok, false);
@@ -327,6 +328,16 @@ test('the Codex probe never reads Linear through a ChatGPT connector and asks fo
     assert.match(r.detail, /Codex has no Linear MCP server switched on\. Linear through a ChatGPT connector cannot be narrowed to read tools/);
   }
   // No model turn ran.
+  assert.equal(b.calls().some((c) => c.tool === 'codex' && c.args[0] === 'exec'), false);
+});
+
+test('the Codex probe says how to sign in to a Linear server that is signed out, without a model turn', { skip: fakesSkip }, (t) => {
+  const b = box(t, { clients: ['codex'] });
+  const bin = join(b.s.fakes, 'codex');
+  const r = codex.probeLinear({ bin, env: { ...b.s.env, ...b.env, FAKE_LINEAR_AUTH: 'not_logged_in' }, cwd: join(b.s.root, 'neutral') });
+  assert.equal(r.ok, false);
+  assert.equal(r.needsLogin, true);
+  assert.match(r.detail, /not signed in to it\. Run `codex mcp login linear`/);
   assert.equal(b.calls().some((c) => c.tool === 'codex' && c.args[0] === 'exec'), false);
 });
 
