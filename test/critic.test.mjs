@@ -493,6 +493,10 @@ test('claude: works the board with Linear tools only, and reads only inside the 
     assert.equal(c.args.includes('--strict-mcp-config'), false);
     assert.equal(c.args.includes('--mcp-config'), false);
     assert.equal(c.env.ENABLE_CLAUDEAI_MCP_SERVERS, undefined);
+    // It waits for its MCP servers, so a claude.ai connector cannot drop out of the turn.
+    assert.equal(c.env.MCP_CONNECTION_NONBLOCKING, '0');
+    assert.equal(c.env.MCP_CONNECT_TIMEOUT_MS, '15000');
+    assert.equal(c.env.CLAUDE_CODE_MCP_STARTUP_WAIT_MS, '15000');
     assert.equal(argAfter(c.args, '--permission-mode'), 'dontAsk');
     assert.equal(argAfter(c.args, '--permission-prompts'), 'none');
     assert.equal(c.args.some((a) => /dangerously|bypass/i.test(a)), false);
