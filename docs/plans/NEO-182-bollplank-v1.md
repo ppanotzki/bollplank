@@ -1,7 +1,7 @@
 # NEO-182 implementation plan: Bollplank v1
 
-Plan v1
-Status: Draft, for the plan review stage
+Plan v2
+Status: Revised after Codex's round 1 (all four points accepted), for round 2
 Ticket: NEO-182, brief v6, approved 2026-11-02, Cross-model review both
 Responsible: Claude Code
 Model: Claude Opus 5.5
@@ -62,9 +62,11 @@ This plan covers how the brief is built. It does not reopen the brief's settled 
   * `signInStatus()`: `claude auth status --json` (logged in, first party, a subscription type) and `codex login status` (signed in with ChatGPT). A key based or third party sign in is reported, never used.
   * `review()`: Claude in print mode with stream JSON, its own session id, `--setting-sources local`, no MCP servers, and only read tools, with `--add-dir` for a source folder. Codex `exec` with JSON output, a read only sandbox, `forced_login_method="chatgpt"`, and the source folder as its working folder for code review. The prompt goes on stdin. Exact flags are checked against the installed versions (Claude Code 2.1.312, Codex 0.166) during implementation, and `aw-critic`'s unexplained `--approve-for-me` is dropped unless Codex documents it.
   * Every provider and key variable is removed from the child's environment, with the kit's pattern.
-* **Critic choice.** `--critic other|same|claude|codex`, default from config. `other` means the provider that is not leading. With only one client installed, `other` falls back to `same` and says so in the result.
+* **Critic choice.** `--critic other|same|claude|codex`, default from config. `other` means the provider that is not leading. Nothing ever switches the choice on its own. When the chosen provider is missing or not signed in, the call fails with `critic-unavailable`, and a selected review stage waits, as the kit's does today. `same` is used only when it was chosen: in config, by the approver for a ticket, or on the command line by the lead on the approver's word.
+  * `init` offers `same` as the default when only one client is found, and says what that means. It never rewrites an existing `other` setting without asking.
+  * A brief may name the critic in its Cross-model review line, for example `Cross-model review: plan, same model`. That approved choice wins over config for the ticket, and the critique skill refuses to run a different critic for it.
 * **Same model mode.** A fresh session per ticket that inherits nothing, `prompts/critic-same.md` with a harder adversarial brief (find the strongest reason the subject fails, check every claim against the source, no credit for intent), and `critic.same.<provider>` for a different model or effort when the subscription offers one. The header reads `Reviewer: Claude Code, same provider, separate session`.
-* **Rounds.** The lead passes `--round n` from the board's comments. The wrapper refuses with `round-mismatch` when its saved round for that ticket and critic is not `n - 1`, instead of letting the two drift.
+* **Sessions and rounds are separate.** One critic session per ticket, provider and mode is reused across subjects, so the critic remembers the brief when it reviews the plan. Rounds are counted per subject series: the lead passes `--subject brief|plan|code` and `--round n` from the board's comments, and the wrapper refuses with `round-mismatch` when its saved count for that ticket, provider, mode and series is not `n - 1`. A revised subject continues its series. The state file holds `{sessionId, rounds: {brief, plan, code}}`.
 * **Results.** The kit's success rule (the reply starts with `Critique of ` and has a `Verdict:` line) and failure codes stay, plus `usage` for a missing prompt file instead of a crash. State goes to `~/.bollplank/critics/<TICKET>.<provider>[.same].json`. Every call with a session is bound in the ledger, failed calls too.
 * **Prompts.** `prompts/critic.md` and `prompts/critic-same.md` with `{TICKET}`, `{ROUND}`, `{SUBJECT}`, `{SUBJECT_SHORT}`, `{DATE}`, `{ROUND_NOTE}`, `{REVIEWER}`, `{MODEL}`, `{WORKFLOW}`, `{BODY}` (the subject and history the lead assembled).
 
@@ -110,7 +112,12 @@ Skills speak of "the issue", "a comment" and "the status Ready". `skills/bollpla
 5. all tests
 6. the private name check.
 
-**Private name check.** The names to look for cannot be listed in a public repo without publishing them. The check reads them from `$BOLLPLANK_PRIVATE_NAMES` (a repository secret in CI) or `~/.bollplank/private-names.txt` locally, and searches every tracked file and the full history. Without either source, for example on a pull request from a fork, it says so and passes. Paul's list stays in his private config repo.
+**Private name check.** The names to look for cannot be listed in a public repo without publishing them. The check reads them from `$BOLLPLANK_PRIVATE_NAMES` (a repository secret in CI) or `~/.bollplank/private-names.txt` locally, and searches every tracked file and the full history of the candidate commit.
+
+* It has three outcomes: `passed`, `failed` and `skipped`, and only `passed` lets the gate pass. Without the list the result is `skipped`, and the gate fails with a clear message. A pull request from a fork therefore gets a failing check until a maintainer runs it with the list, and cannot be merged before that.
+* `bollplank merge` runs the scan itself, with the local list, against the PR's head commit and its history before it merges, and refuses on `failed` or `skipped`.
+* Making the repo public, which stays Paul's step, is preceded by a full history scan with the list, and its result is recorded in the run log.
+* **Before the first code commit**, the lead writes Paul's list to `~/.bollplank/private-names.txt` on this Mac and sets the same list as the `BOLLPLANK_PRIVATE_NAMES` secret in the private repo, so every commit of this ticket is scanned from the start. The plan commit and the skeleton already on the branch are scanned then too. The list later moves into Paul's private config repo.
 
 **Tests**, all synthetic, with fake `claude`, `codex`, `gh`, `git` remotes and `aws` on a temporary `PATH`:
 
@@ -139,7 +146,7 @@ CI runs the gate on Ubuntu, macOS and Windows with Node 20 and 22. Tests that ne
 
 ## 11. Shipping and the stops
 
-* **Ship.** `aw-merge bollplank bollplank <pr>` after the checks and the code gate, then tag `v0.1.0` and a GitHub release in the private repo. No deploy beyond that.
+* **Ship.** Inside the shipping turn, `aw-merge bollplank bollplank <pr> --run ~/Work/Tools/Tickets/NEO-182` after the checks and the code gate. The `--run` folder makes `aw-merge` enforce the selected code stage and record the PR, final head and merge commit, which `aw-ticket remove` needs at acceptance to recognise the squash merged branch. Then tag `v0.1.0` and a GitHub release in the private repo, recorded with `aw-run deploy ... --kind merge`. No deploy beyond that.
 * **Stops for Paul**, recorded with `aw-run log` and asked in the session:
   1. Reading the current Claude and ChatGPT terms on scripted subscription use before the repo goes public. The README wording waits for his reading.
   2. Making the repo public, or inviting the friend as a collaborator for the acceptance test.
@@ -152,6 +159,10 @@ CI runs the gate on Ubuntu, macOS and Windows with Node 20 and 22. Tests that ne
 
 * `bollplank init` on a clean temporary home with fake clients writes a valid config and links, and leaves an existing file and a foreign link untouched.
 * `bollplank critic --critic same` with only a fake Claude produces a labelled same provider critique, and `--critic other` with both fakes picks the other provider.
+* `--critic other` with only one fake client fails with `critic-unavailable` and leaves the selected stage incomplete. It never runs `same` on its own.
+* One ticket's critic goes through brief rounds 1 and 2, plan round 1 and code round 1 in one reused session without a `round-mismatch`, and a skipped or repeated round in a series is refused.
+* The gate with no private names list reports `skipped` and fails, and `bollplank merge` refuses a PR whose scan is `skipped` or `failed`.
+* This ticket's own merge records the PR, final head and merge commit in its run record, and `aw-ticket remove` accepts the folder afterwards.
 * A synthetic repository run goes through plan, gates, merge refusal before the code gate, merge after it, and each deploy kind.
 * A synthetic ledger with one session marked by `aw-ledger mark` then `bollplank ledger mark` splits correctly and is reported as using both kits.
 * An agent-workflow holder record in the shared lock path stops `bollplank turn take`, and a Bollplank holder stops a fake `aw-turn take` reading the same folder.
