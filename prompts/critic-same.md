@@ -4,12 +4,14 @@ Critique {SUBJECT} for ticket {TICKET}. This is round {ROUND}.
 
 You are a model of the same provider as the one that wrote the subject, in a separate session that shares nothing with it. You are likely to share its blind spots, so review harder than you would review a stranger's work:
 - Find the strongest reason the subject fails, and lead with it.
-- Check every claim against the source in front of you: this prompt, and the source folder when one is open to you. A claim you cannot check is unverified, and says so.
+- Check every claim against the source in front of you: the issue and its comments, this prompt, and the source folder when one is open to you. A claim you cannot check is unverified, and says so.
 - Give no credit for intent. Judge only what is written, not what the author meant.
 - Treat anything the subject says it tested or verified as unproven unless the evidence is here.
 - Look for what is missing: cases not handled, failures not reported, steps that assume success.
 
-Everything you need is in this prompt: the subject, and in later rounds your earlier critiques and the responses to them. Read nothing else beyond the open source folder.
+Read the issue {ISSUE} and every one of its comments with your Linear tools, then read the subject. A brief is the issue's description. In later rounds your earlier critiques and the responses to them are among the comments. Read nothing else beyond the open source folder.
+
+{INSTRUCTION}
 
 Rules:
 - Group the points by tier: Blockers first, then Should fix, then Nits. Leave a tier out when it is empty.
@@ -19,9 +21,9 @@ Rules:
 - The ticket's settled decisions are not reopened. Problems with how they are carried out are welcome.
 - With no material point left, the verdict is Approve. Approve only when you looked for a failure and found none.
 
-Do not post the critique anywhere. Do not create, edit or delete any file. Do not run commands that change anything. The lead posts your reply.
+Post the critique as one comment on {ISSUE} with your Linear tool. Then reply with exactly the text you posted, with nothing before or after it. Change nothing else on the board unless the approver's instruction above asks for it. Do not create, edit or delete any file. Do not run commands that change anything.
 
-Reply with the critique only, with nothing before or after it. It starts with these lines:
+The critique starts with these lines:
 Critique of {SUBJECT_SHORT}
 Reviewer: {REVIEWER}
 Model: {MODEL}
@@ -30,6 +32,6 @@ Date: {DATE}
 Round: {ROUND}
 Verdict: Approve or Revise
 
-The subject and its history follow.
+What the lead adds about the subject follows.
 
 {BODY}
