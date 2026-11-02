@@ -9,10 +9,12 @@ import { sandbox, fakesSkip, bin } from './helpers.mjs';
 // The same fakes as test/init.test.mjs.
 // What a Linear tool returns for the synthetic workspace. FAKE_STATUSES replaces the status list,
 // FAKE_PROJECTS the project list, and FAKE_REPLY_STATUSES the statuses the model claims in its reply.
+// FAKE_GLOBEX_STATUSES adds the team GLOBEX with those statuses and the project Portal.
 const TEAMS = `
 const statuses = (process.env.FAKE_STATUSES || 'Backlog,Draft,Ready,In Progress,Acceptance,Done').split(',');
-const TEAMS_TEXT = JSON.stringify({ teams: [{ id: 't1', key: 'ACME', name: 'Acme', states: statuses.map((name) => ({ name })), projects: (process.env.FAKE_PROJECTS || 'Shop,Widgets').split(',').map((name) => ({ name })) }] });
-const REPLY = JSON.stringify({ teams: [{ key: 'ACME', name: process.env.FAKE_REPLY_NAME || 'Acme', statuses: process.env.FAKE_REPLY_STATUSES ? process.env.FAKE_REPLY_STATUSES.split(',') : process.env.FAKE_REPLY_LOWER ? statuses.map((s) => s.toLowerCase()) : statuses, projects: ['Shop', 'Widgets'] }, { key: 'GLOBEX', name: 'Globex', statuses: ['Todo'], projects: [] }] });
+const globex = process.env.FAKE_GLOBEX_STATUSES ? process.env.FAKE_GLOBEX_STATUSES.split(',') : null;
+const TEAMS_TEXT = JSON.stringify({ teams: [{ id: 't1', key: 'ACME', name: 'Acme', states: statuses.map((name) => ({ name })), projects: (process.env.FAKE_PROJECTS || 'Shop,Widgets').split(',').map((name) => ({ name })) }, ...(globex ? [{ id: 't2', key: 'GLOBEX', name: 'Globex', states: globex.map((name) => ({ name })), projects: [{ name: 'Portal' }] }] : [])] });
+const REPLY = JSON.stringify({ teams: [{ key: 'ACME', name: process.env.FAKE_REPLY_NAME || 'Acme', statuses: process.env.FAKE_REPLY_STATUSES ? process.env.FAKE_REPLY_STATUSES.split(',') : process.env.FAKE_REPLY_LOWER ? statuses.map((s) => s.toLowerCase()) : statuses, projects: ['Shop', 'Widgets'] }, { key: 'GLOBEX', name: 'Globex', statuses: globex ?? ['Todo'], projects: globex ? ['Portal'] : [] }] });
 `;
 
 // FAKE_LINEAR: none (no Linear tool), real (a real tool call), claimed (a reply with no call),
@@ -233,6 +235,39 @@ test('doctor fails a missing board status and a client that cannot read Linear, 
   c = byId(b.doctor());
   assert.equal(c['board.team.GLOBEX'].ok, false);
   assert.equal(c['board.status.GLOBEX.done'], undefined);
+});
+
+test('doctor checks each project against its own team and statuses, and names the key to fix', { skip: fakesSkip }, (t) => {
+  const b = box(t);
+  b.install();
+  const file = join(b.s.bollplank, 'config.json');
+  const config = JSON.parse(readFileSync(file, 'utf8'));
+  const project = (board) => ({ source: b.s.root, tickets: join(b.s.root, 'tickets'), repos: { 'acme-api': { github: 'acme/acme-api', checks: ['checks'] } }, board });
+  // acme-shop uses the board's team and statuses. globex-portal has its own team and mapping, and
+  // takes the board's name for done.
+  writeFileSync(file, JSON.stringify({ ...config, projects: { 'acme-shop': project({ project: 'Shop' }), 'globex-portal': project({ team: 'GLOBEX', project: 'Portal', statuses: { draft: 'Backlog', ready: 'Todo', acceptance: 'In Review' } }) } }));
+  const globex = 'Backlog,Todo,In Progress,In Review,Done,Canceled';
+  let r = b.doctor(['--json'], { FAKE_GLOBEX_STATUSES: globex });
+  assert.equal(r.status, 0, r.stdout);
+  let c = byId(r);
+  for (const id of ['board.team.ACME', 'board.project.ACME.Shop', 'board.status.ACME.acceptance', 'board.team.GLOBEX', 'board.project.GLOBEX.Portal', 'board.status.GLOBEX.acceptance', 'board.status.GLOBEX.ready', 'board.status.GLOBEX.done']) assert.equal(c[id]?.ok, true, id);
+  assert.equal(c['board.status.GLOBEX.acceptance'].detail, 'GLOBEX has the status "In Review"');
+  // GLOBEX loses In Review. The fix names the project's own key.
+  r = b.doctor(['--json'], { FAKE_GLOBEX_STATUSES: 'Backlog,Todo,In Progress,Done,Canceled' });
+  assert.equal(r.status, 1, r.stdout);
+  c = byId(r);
+  assert.equal(c['board.status.GLOBEX.acceptance'].ok, false);
+  assert.match(c['board.status.GLOBEX.acceptance'].fix, /Under Started, add a status named "In Review"\. Or set projects\.globex-portal\.board\.statuses\.acceptance in the config to a status that exists\.$/);
+  assert.equal(c['board.status.ACME.acceptance'].ok, true);
+  // GLOBEX has no Done. That name comes from the top level, so the fix names board.statuses.done.
+  r = b.doctor(['--json'], { FAKE_GLOBEX_STATUSES: 'Backlog,Todo,In Progress,In Review,Shipped' });
+  c = byId(r);
+  assert.equal(c['board.status.GLOBEX.done'].ok, false);
+  assert.match(c['board.status.GLOBEX.done'].fix, /Or set board\.statuses\.done in the config/);
+  // A suggested name a new Linear team lacks says so.
+  r = b.doctor(['--json'], { FAKE_STATUSES: 'Backlog,Todo,In Progress,Done,Canceled', FAKE_GLOBEX_STATUSES: globex });
+  c = byId(r);
+  assert.match(c['board.status.ACME.acceptance'].fix, /A new Linear team has only Backlog, Todo, In Progress, Done, Canceled, so a status named "Acceptance" is added by hand\.$/);
 });
 
 test('doctor compares the board names exactly and names Linear\'s spelling when only the case differs', { skip: fakesSkip }, (t) => {

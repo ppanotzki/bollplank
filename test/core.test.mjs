@@ -29,6 +29,60 @@ test('the example config is valid and defaults fill statuses, critic, runs and t
   assert.ok(!c.projects['acme-shop'].source.startsWith('~'));
 });
 
+test('each project has its own statuses: its own names, then the top level ones, then Linear\'s suggestion', (t) => {
+  const repos = { 'acme-api': { github: 'acme/acme-api', checks: ['checks'] } };
+  const two = {
+    approver: { name: 'Ada' },
+    board: { kind: 'linear', team: 'ACME', statuses: { acceptance: 'Review' } },
+    projects: {
+      'acme-shop': { source: '/s', tickets: '/t', repos },
+      'globex-portal': { source: '/s', tickets: '/t', repos, board: { team: 'GLOBEX', project: 'Portal', statuses: { ready: 'Todo', acceptance: 'In Review' } } },
+    },
+  };
+  assert.deepEqual(validate(two), []);
+  const c = withDefaults(two);
+  assert.deepEqual(c.board.statuses, { draft: 'Draft', ready: 'Ready', inProgress: 'In Progress', acceptance: 'Review', done: 'Done' });
+  assert.deepEqual(c.projects['acme-shop'].board.statuses, c.board.statuses);
+  assert.deepEqual(c.projects['globex-portal'].board.statuses, { draft: 'Draft', ready: 'Todo', inProgress: 'In Progress', acceptance: 'In Review', done: 'Done' });
+  assert.equal(c.projects['globex-portal'].board.team, 'GLOBEX');
+  // With no mapping anywhere, Linear's suggestion.
+  assert.deepEqual(withDefaults(acmeConfig('/s', '/t')).projects['acme-shop'].board.statuses, { draft: 'Draft', ready: 'Ready', inProgress: 'In Progress', acceptance: 'Acceptance', done: 'Done' });
+  // A project's mapping is validated like the top level one.
+  const bad = structuredClone(two);
+  bad.projects['globex-portal'].board.statuses = { ready: '' };
+  bad.projects['acme-shop'].board = { statuses: 'Todo' };
+  const p = validate(bad).join('\n');
+  assert.match(p, /projects\.globex-portal\.board\.statuses\.ready: must be a name/);
+  assert.match(p, /projects\.acme-shop\.board\.statuses: must be an object/);
+  // context gives each project its own mapping, and the top level one without a project.
+  const s = sandbox();
+  t.after(s.clean);
+  s.config(two);
+  const top = s.run(['context']).json;
+  assert.equal(top.board.statuses.acceptance, 'Review');
+  assert.deepEqual(top.boards['globex-portal'], { team: 'GLOBEX', project: 'Portal', statuses: c.projects['globex-portal'].board.statuses });
+  assert.equal(top.boards['acme-shop'].statuses.ready, 'Ready');
+  assert.equal(s.run(['context', 'globex-portal']).json.board.statuses.acceptance, 'In Review');
+  assert.equal(s.run(['context', 'acme-shop']).json.board.statuses.acceptance, 'Review');
+});
+
+test('the board skill creates a project and checks statuses only when asked, confirming first and reading back', () => {
+  const skill = readFileSync(join(kit, 'skills', 'bollplank-board', 'SKILL.md'), 'utf8');
+  const linear = readFileSync(join(kit, 'skills', 'bollplank-board', 'references', 'linear.md'), 'utf8');
+  const create = skill.slice(skill.indexOf('**Create a project.**'), skill.indexOf('**Check the statuses.**'));
+  assert.match(skill, /## Setup operations, only when the user asks/);
+  assert.match(create, /Confirm the team and the exact project name with the user first/);
+  assert.match(create, /call the board's create tool once, with no id of an existing project/);
+  assert.match(create, /Read the team's projects back/);
+  assert.match(create, /Never update, rename or move an existing project/);
+  assert.match(skill, /\*\*Check the statuses\.\*\* Run `bollplank context <project>`/);
+  assert.match(skill, /cannot create a status, so for each missing one give the steps/);
+  assert.match(linear, /\| Create a project \|.*no project id.*list the team's projects again/);
+  assert.match(linear, /\| Check the statuses \|.*Linear's MCP server cannot create a status/);
+  // Status names come from the project's own context.
+  assert.match(skill, /With a project, `board\.statuses` is that project's own mapping/);
+});
+
 test('validation names each problem and never accepts a repo without checks', () => {
   const c = example();
   delete c.approver;

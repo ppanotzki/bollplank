@@ -1,6 +1,6 @@
 ---
 name: bollplank-board
-description: How Bollplank skills read and write the ticket board. Load it whenever another bollplank skill says to read the issue or its comments, write the description, post or update a comment, move the issue to a status, find the project's Release notes document, or capture a board readback. It maps each operation to the board configured in Bollplank.
+description: How Bollplank skills read and write the ticket board. Load it whenever another bollplank skill says to read the issue or its comments, write the description, post or update a comment, move the issue to a status, find the project's Release notes document, or capture a board readback. Also load it when the user asks to create a board project or to check a project's statuses. It maps each operation to the board configured in Bollplank.
 ---
 
 # The board
@@ -10,7 +10,7 @@ The other Bollplank skills speak of "the issue", "a comment" and "the ready stat
 ## Find the board and the project
 
 1. Run `bollplank context` once without a project. Its `board.kind` names the board, and `boards` maps each configured project to its board `team` and `project`, with the top level defaults filled in.
-2. Pick the project whose `boards` entry matches the issue's team and project, or the one the session works in. Then run `bollplank context <project>` and use its `board.statuses`, `project.board`, and the project's `boards` entry for a team or project that `project.board` leaves out.
+2. Pick the project whose `boards` entry matches the issue's team and project, or the one the session works in. Then run `bollplank context <project>` and use its `board.statuses`, `project.board`, and the project's `boards` entry for a team or project that `project.board` leaves out. With a project, `board.statuses` is that project's own mapping. Never take status names from `bollplank context` without a project, since a project in another team can name them differently.
 3. Follow `references/<board.kind>.md` for each operation below. Today the only kind is `linear`, in [references/linear.md](references/linear.md).
 
 When the board's tools are missing in this session, stop and say so. Suggest `bollplank doctor`. Never fall back to an API key, a script or a web page.
@@ -26,6 +26,13 @@ When the board's tools are missing in this session, stop and say so. Suggest `bo
 - **Release notes:** find or create the project's document titled exactly "Release notes", add a section and read it back.
 - **Find raised issues:** every issue whose brief header has a `Raised by:` line naming this ticket.
 - **Readback:** the minimal JSON file the consulting and configuration runs need before `bollplank run init` and `rebaseline`.
+
+## Setup operations, only when the user asks
+
+No other skill uses these. Do one only when the user asks for it in this session.
+
+- **Create a project.** Confirm the team and the exact project name with the user first, and wait for a yes. Then call the board's create tool once, with no id of an existing project. Read the team's projects back and report whether the project is there with that name. Never update, rename or move an existing project as part of it. When a project with that name already exists, say so and create nothing.
+- **Check the statuses.** Run `bollplank context <project>` and take the five names from its `board.statuses`. Read the team's statuses and compare each name exactly. Report the ones that exist and the ones that are missing. The board's tools cannot create a status, so for each missing one give the steps to add it in the board's settings, and suggest `bollplank doctor` once they are added.
 
 ## Rules
 

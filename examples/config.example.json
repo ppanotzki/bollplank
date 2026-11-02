@@ -39,7 +39,7 @@
       "source": "~/Code/acme-advice",
       "tickets": "~/Code/acme-advice/runs",
       "repos": {},
-      "board": { "team": "ADV", "project": "Advice", "teamId": "00000000-0000-4000-8000-000000000001", "projectId": "00000000-0000-4000-8000-000000000002" },
+      "board": { "team": "ADV", "project": "Advice", "teamId": "00000000-0000-4000-8000-000000000001", "projectId": "00000000-0000-4000-8000-000000000002", "statuses": { "ready": "Todo", "acceptance": "In Review" } },
       "ticketPrefix": "ADV",
       "targets": { "workspace": { "constraint": "Delivery artifacts within the approved ticket scope." } },
       "runbook": "docs/runbook.md",

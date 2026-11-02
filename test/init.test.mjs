@@ -12,10 +12,21 @@ import { CODEX_LINEAR_READ_TOOLS, isLinearRead, isReadTool, judge, jsonIn, LINEA
 import { githubSlug } from '../lib/commands/init.mjs';
 
 // What a Linear tool returns for the synthetic workspace. FAKE_STATUSES replaces the status list.
+// FAKE_GLOBEX_STATUSES adds the team GLOBEX with those statuses and the project Portal.
+// FAKE_LATE_PROJECT is a project of ACME from each client's second model call on, as if the person
+// created it in between.
 const TEAMS = `
 const statuses = (process.env.FAKE_STATUSES || 'Backlog,Draft,Ready,In Progress,Acceptance,Done').split(',');
-const TEAMS_TEXT = JSON.stringify({ teams: [{ id: 't1', key: 'ACME', name: 'Acme', states: statuses.map((name) => ({ name })), projects: [{ name: 'Shop' }, { name: 'Widgets' }] }] });
-const REPLY = JSON.stringify({ teams: [{ key: 'ACME', name: 'Acme', statuses, projects: ['Shop', 'Widgets'] }, { key: 'GLOBEX', name: 'Globex', statuses: ['Todo'], projects: [] }] });
+const globex = process.env.FAKE_GLOBEX_STATUSES ? process.env.FAKE_GLOBEX_STATUSES.split(',') : null;
+let turns = 0;
+if (process.env.FAKE_LATE_PROJECT && ['-p', 'exec'].includes(args[0])) {
+  const f = path.join(state, 'turns-' + args[0]);
+  turns = (fs.existsSync(f) ? Number(fs.readFileSync(f, 'utf8')) : 0) + 1;
+  fs.writeFileSync(f, String(turns));
+}
+const acmeProjects = ['Shop', 'Widgets', ...(turns >= 2 ? [process.env.FAKE_LATE_PROJECT] : [])];
+const TEAMS_TEXT = JSON.stringify({ teams: [{ id: 't1', key: 'ACME', name: 'Acme', states: statuses.map((name) => ({ name })), projects: acmeProjects.map((name) => ({ name })) }, ...(globex ? [{ id: 't2', key: 'GLOBEX', name: 'Globex', states: globex.map((name) => ({ name })), projects: [{ name: 'Portal' }] }] : [])] });
+const REPLY = JSON.stringify({ teams: [{ key: 'ACME', name: 'Acme', statuses, projects: acmeProjects }, { key: 'GLOBEX', name: 'Globex', statuses: globex ?? ['Todo'], projects: globex ? ['Portal'] : [] }] });
 `;
 
 // FAKE_LINEAR: none (no Linear tool), real (a real tool call), claimed (a reply with no call),
@@ -731,4 +742,103 @@ test('init --offline skips the probe and says so, and init without a terminal or
   const tty = b.s.run(['init']);
   assert.equal(tty.status, 2);
   assert.match(tty.json.detail, /needs a terminal/);
+});
+
+test('a project in another team maps its own statuses, which init explains, and context and doctor use', { skip: fakesSkip }, (t) => {
+  const b = box(t);
+  const own = { draft: 'Backlog', ready: 'Todo', acceptance: 'In Review' };
+  const r = b.init(withSource(b, { team: 'ACME', project: 'Shop', projects: { 'acme-shop': { team: 'GLOBEX', project: 'Portal', statuses: own } } }), ['--json'], { FAKE_GLOBEX_STATUSES: 'Backlog,Todo,In Progress,In Review,Done,Canceled' });
+  assert.equal(r.status, 0, r.stdout);
+  const c = b.config();
+  assert.deepEqual(c.board.statuses, { draft: 'Draft', ready: 'Ready', inProgress: 'In Progress', acceptance: 'Acceptance', done: 'Done' });
+  // The project's own mapping, with the board's names for the states it leaves alone.
+  assert.deepEqual(c.projects['acme-shop'].board, { team: 'GLOBEX', project: 'Portal', statuses: { draft: 'Backlog', ready: 'Todo', inProgress: 'In Progress', acceptance: 'In Review', done: 'Done' } });
+  const said = text(r);
+  assert.match(said, /The statuses of GLOBEX in Linear: Backlog, Todo, In Progress, In Review, Done, Canceled\./);
+  assert.match(said, /acceptance: a shipped ticket waiting for your acceptance test\./);
+  assert.match(said, /A new Linear team has Backlog, Todo, In Progress, Done, Canceled\. It lacks Draft, Ready, Acceptance/);
+  // The answers name no mapping, so own is the default, since the team differs from step 3's.
+  assert.match(said, /Linear team GLOBEX, project Portal, with its own statuses\./);
+  // Doctor checks each against its own team.
+  const check = (id) => r.json.doctor.checks.find((x) => x.id === id);
+  for (const id of ['board.team.GLOBEX', 'board.project.GLOBEX.Portal', 'board.status.GLOBEX.acceptance', 'board.status.GLOBEX.ready', 'board.status.ACME.acceptance']) assert.equal(check(id)?.ok, true, id);
+  const ctx = b.s.run(['context', 'acme-shop']).json;
+  assert.equal(ctx.board.statuses.acceptance, 'In Review');
+  assert.equal(ctx.boards['acme-shop'].statuses.ready, 'Todo');
+  assert.equal(b.s.run(['context']).json.board.statuses.acceptance, 'Acceptance');
+  // The same team keeps the board's statuses by default, and the project saves none of its own.
+  const same = b.init(withSource(b, { team: 'ACME', project: 'Shop', addProject: true, replaceProject: true, writeConfig: true, projects: { 'acme-shop': { team: 'ACME', mapping: 'board' } } }));
+  assert.equal(same.status, 0, same.stdout);
+  assert.deepEqual(b.config().projects['acme-shop'].board, { team: 'ACME', project: 'Shop' });
+});
+
+test('a missing Linear project is never created by init: it offers the session sentence, rereads three times, then stops', { skip: fakesSkip }, (t) => {
+  const b = box(t);
+  const r = b.init(withSource(b, { team: 'ACME', project: 'Gadgets', missingProject: { ACME: { Gadgets: 'session' } } }));
+  assert.equal(r.status, 1, r.stdout);
+  assert.equal(r.json.failure, 'missing-project');
+  assert.match(r.json.detail, /Linear still has no project named Gadgets in ACME after three reads, so init stopped and saved nothing/);
+  assert.equal(existsSync(join(b.s.bollplank, 'config.json')), false);
+  // One probe per client in step 2, then three reads with the read only probe.
+  const probes = b.calls().filter((c) => c.prompt?.includes('Bollplank setup check'));
+  assert.equal(probes.filter((c) => c.tool === 'claude').length, 4);
+  const said = b.s.run(['init', '--answers', join(b.s.root, 'answers-1.json')], b.env).stdout;
+  assert.match(said, /Gadgets is not a project of ACME in Linear\. Bollplank never creates one on its own/);
+  assert.match(said, /In your Claude Code or Codex session, type this:\n {2}Create the Linear project Gadgets in team ACME\n/);
+  assert.equal(said.match(/Still no project named Gadgets in ACME\./g).length, 3);
+});
+
+test('a missing Linear project created in Linear is found on a fresh read, and other picks another', { skip: fakesSkip }, (t) => {
+  const b = box(t);
+  const r = b.init(withSource(b, { team: 'ACME', project: 'Gadgets', missingProject: { ACME: { Gadgets: 'linear' } } }), ['--json'], { FAKE_LATE_PROJECT: 'Gadgets' });
+  assert.equal(r.status, 0, r.stdout);
+  assert.match(text(r), /Open Linear, go to Projects, and create a project named "Gadgets" exactly, with ACME as its team\./);
+  assert.match(text(r), /Found the project Gadgets in ACME now\./);
+  assert.equal(b.config().board.project, 'Gadgets');
+  assert.equal(r.json.doctor.checks.find((c) => c.id === 'board.project.ACME.Gadgets').ok, true);
+  // Offline, Linear was not read, so the name is kept as typed.
+  const other = b.init(withSource(b, { team: 'ACME', project: 'Gizmos', addProject: false, writeConfig: true, missingProject: { ACME: { Gizmos: 'other' } }, otherProject: { ACME: { Gizmos: 'Widgets' } } }), ['--json', '--offline']);
+  assert.equal(other.status, 0, other.stdout);
+  assert.equal(b.config().board.project, 'Gizmos');
+  // Online, other asks for another project.
+  const online = b.init(withSource(b, { team: 'ACME', project: 'Gizmos', addProject: false, writeConfig: true, missingProject: { ACME: { Gizmos: 'other' } }, otherProject: { ACME: { Gizmos: 'Widgets' } } }));
+  assert.equal(online.status, 0, online.stdout);
+  assert.match(text(online), /Gizmos is not a project of ACME in Linear/);
+  assert.equal(b.config().board.project, 'Widgets');
+});
+
+test('every client call init and doctor make is the read only probe or a critic dry run that allows no write', { skip: fakesSkip }, (t) => {
+  const b = box(t);
+  assert.equal(b.init(withSource(b)).status, 0);
+  assert.equal(b.s.run(['doctor', '--json'], b.env).status, 0);
+  const calls = b.calls().filter((c) => !('prompt' in c) && !('ran' in c));
+  const turns = b.calls().filter((c) => 'prompt' in c);
+  // Calls that read the client itself: its version, sign in and MCP servers. Nothing is added.
+  const meta = (c) => c.args[0] === '--version' || (c.tool === 'claude' && c.args[0] === 'auth') || (c.tool === 'codex' && c.args[0] === 'login' && c.args[1] === 'status') || (c.args[0] === 'mcp' && ['list', 'get'].includes(c.args[1]));
+  const model = calls.filter((c) => !meta(c));
+  assert.ok(model.every((c) => (c.tool === 'claude' ? c.args[0] === '-p' : c.args[0] === 'exec')), JSON.stringify(model.map((c) => c.args.slice(0, 2))));
+  // Each model turn is the probe or the dry run, by its prompt.
+  for (const c of turns) assert.ok(/Bollplank setup check|Bollplank health check/.test(c.prompt), c.prompt);
+  for (const kind of ['setup check', 'health check']) for (const tool of ['claude', 'codex']) assert.ok(turns.some((c) => c.tool === tool && c.prompt.includes(`Bollplank ${kind}`)), `${tool} ${kind}`);
+  const value = (args, flag) => (args.includes(flag) ? args[args.indexOf(flag) + 1] : null);
+  // An allow rule is a read when it names a read tool, or a wildcard after a read verb. mcp__x__* is not.
+  const readRule = (rule) => /^(Read|Grep|Glob)(\(|$)/.test(rule) || (rule.startsWith('mcp__') && rule.replace(/\*$/, '').split('__').at(-1) !== '' && isReadTool(rule.replace(/\*$/, '')));
+  for (const c of model) {
+    const a = c.args;
+    assert.ok(!a.some((x) => /dangerously|bypass|full-auto|danger-full-access|yolo/i.test(x)), a.join(' '));
+    if (c.tool === 'claude') {
+      assert.ok(!['bypassPermissions', 'acceptEdits', 'auto'].includes(value(a, '--permission-mode')), a.join(' '));
+      for (const rule of (value(a, '--allowedTools') ?? '').split(',').filter(Boolean)) assert.ok(readRule(rule), `claude allows ${rule}`);
+      // No built in tool but the read ones.
+      for (const tool of (value(a, '--tools') ?? '').split(',').filter(Boolean)) assert.ok(['Read', 'Grep', 'Glob'].includes(tool), `claude offers ${tool}`);
+    } else {
+      assert.equal(value(a, '--sandbox'), 'read-only', a.join(' '));
+      // Every MCP server the fake lists is off, or offers only read tools.
+      for (const server of ['linear', 'acme_files']) {
+        const tools = a.find((x) => x.startsWith(`mcp_servers.${server}.enabled_tools=`));
+        assert.ok(a.includes(`mcp_servers.${server}.enabled=false`) || tools, `codex leaves ${server} on: ${a.join(' ')}`);
+        if (tools) for (const tool of JSON.parse(tools.slice(tools.indexOf('=') + 1))) assert.ok(isReadTool(tool), `codex allows ${tool}`);
+      }
+    }
+  }
 });

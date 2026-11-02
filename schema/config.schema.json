@@ -15,11 +15,7 @@
         "kind": { "const": "linear" },
         "team": { "type": "string", "description": "The default team for projects that name none." },
         "project": { "type": "string", "description": "The default board project for projects that name none." },
-        "statuses": {
-          "type": "object",
-          "properties": { "draft": { "type": "string" }, "ready": { "type": "string" }, "inProgress": { "type": "string" }, "acceptance": { "type": "string" }, "done": { "type": "string" } },
-          "additionalProperties": false
-        }
+        "statuses": { "$ref": "#/$defs/statuses", "description": "The status names for projects that map none of their own. A name left out is the board kind's suggestion." }
       }
     },
     "critic": {
@@ -34,6 +30,11 @@
     "projects": { "type": "object", "additionalProperties": { "$ref": "#/$defs/project" } }
   },
   "$defs": {
+    "statuses": {
+      "type": "object",
+      "properties": { "draft": { "type": "string" }, "ready": { "type": "string" }, "inProgress": { "type": "string" }, "acceptance": { "type": "string" }, "done": { "type": "string" } },
+      "additionalProperties": false
+    },
     "providerSettings": {
       "type": "object",
       "properties": { "claude": { "$ref": "#/$defs/model" }, "codex": { "$ref": "#/$defs/model" } },
@@ -74,7 +75,7 @@
         "validatesAgainst": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } },
         "shipOrder": { "type": "array", "items": { "type": "string" }, "uniqueItems": true, "description": "The order repos merge and deploy in. When given, it lists every configured repo exactly once." },
         "critic": { "type": "object", "properties": { "default": { "enum": ["other", "same", "claude", "codex"], "description": "This project's critic default. It wins over the top level critic.default." } } },
-        "board": { "type": "object", "properties": { "team": { "type": "string" }, "project": { "type": "string" }, "teamId": { "type": "string" }, "projectId": { "type": "string" } } },
+        "board": { "type": "object", "properties": { "team": { "type": "string" }, "project": { "type": "string" }, "teamId": { "type": "string" }, "projectId": { "type": "string" }, "statuses": { "$ref": "#/$defs/statuses", "description": "This project's own status names. A name left out comes from the top level board.statuses." } } },
         "runs": { "type": "boolean", "default": false },
         "privateScan": { "type": "boolean", "default": false },
         "stopList": { "type": "array", "items": { "type": "string" } },
