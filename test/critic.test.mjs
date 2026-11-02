@@ -545,8 +545,9 @@ test('codex: read-dir is the working folder in a read only ChatGPT session, othe
     assert.ok(c.args.includes('web_search="disabled"'));
     for (const f of ['apps', 'plugins', 'remote_plugin', 'hooks', 'computer_use', 'browser_use', 'multi_agent']) assert.ok(c.args.some((a, i) => a === f && c.args[i - 1] === '--disable'), f);
     assert.ok(c.args.includes('mcp_servers.acme_files.enabled=false'));
-    // The Linear server stays on with all its tools.
-    assert.equal(c.args.some((a) => a.startsWith('mcp_servers.linear.')), false);
+    // The Linear server stays on with all its tools, which run without an approval request, so the
+    // critic can post under approval_policy never.
+    assert.deepEqual(c.args.filter((a) => a.startsWith('mcp_servers.linear.')), ['mcp_servers.linear.default_tools_approval_mode="approve"']);
     assert.equal(argAfter(c.args, '-m'), 'gpt-acme');
     assert.ok(c.args.includes('model_reasoning_effort="high"'));
     // Writes, network and escalation stay blocked, and nothing bypasses approvals or the sandbox.
@@ -772,7 +773,7 @@ test('codex: the critic is not started when its other MCP servers cannot all be 
   // With only the Linear server there is nothing to switch off.
   const only = b.call({ lead: 'claude' }, { FAKE_CODEX_MCP: 'linear' });
   assert.equal(only.status, 0, only.stdout);
-  assert.equal(b.reviews().at(-1).args.some((a) => a.startsWith('mcp_servers.')), false);
+  assert.deepEqual(b.reviews().at(-1).args.filter((a) => a.startsWith('mcp_servers.')), ['mcp_servers.linear.default_tools_approval_mode="approve"']);
 });
 
 for (const [critic, lead, extra, fix] of [
