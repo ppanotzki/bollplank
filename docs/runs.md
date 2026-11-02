@@ -27,11 +27,11 @@ The default mode, for projects whose work is code in git repos on GitHub.
 5. **Plan review**, when the brief selected `plan` or `both`. The critic reviews the plan commit, the lead addresses each round, and implementation waits until `bollplank run gate ... plan` passes.
 6. **Implement**, with parallel subagents where steps are independent. Changes that other repos or deployed clients depend on only add. Removals wait for a later ticket.
 7. **Review, test and hunt.** A reviewer reads the whole diff against the brief, a tester runs the gates and the brief's acceptance cases, and a bug hunter looks for edge cases.
-8. **Code review**, when the brief selected `code` or `both`, on the diff's head commit. A later change to covered behaviour reopens the stage. At merge, `bollplank merge` checks that the PR head carries the approved change by patch id, so a clean rebase keeps the approval and a changed change needs the stage reopened and reviewed again.
+8. **Code review**, when the brief selected `code` or `both`, on the diff's head commits. Each round names the reviewed head of every changed repo with `--revisions`. A later change to covered behaviour reopens the stage. At merge, `bollplank merge` checks that each PR head carries the change approved for its repo by verbatim patch id, so a clean rebase keeps the approval, and a changed change, an indentation change included, needs the stage reopened and reviewed again.
 9. **PRs.** One PR per changed repo. The run waits for every check, and rebases a PR that conflicts with its base, since GitHub runs no checks on one.
 10. **Ship.** See below.
 11. **Release note and report**, as comments on the issue.
-12. **Acceptance.** The issue moves to acceptance only when every deploy recorded in the run record has status `succeeded`.
+12. **Acceptance.** The issue moves to acceptance only when `bollplank run check-shipped` passes: every repo the ticket changes is merged and its merge commit deployed with status `succeeded`.
 
 The approver tests and says "accept ACME-1". `bollplank-accept` adds the release note to the project's "Release notes" document, moves the issue to done, posts the ticket ledger and removes the ticket folder. `bollplank ticket remove` refuses when anything could be lost.
 
@@ -42,7 +42,7 @@ The approver tests and says "accept ACME-1". `bollplank-accept` adds the release
 1. `bollplank turn take` takes the machine's one shipping lock. Another ticket's lock is never removed.
 2. `bollplank ticket refresh` fetches every repo, and each ticket branch is rebased on its latest base branch.
 3. The rebased branches are pushed, and the run waits for the PR checks on the new heads.
-4. For each changed repo in `shipOrder`: `bollplank merge --run`, then `bollplank deploy-wait` on the merge commit, then `bollplank run deploy` with the `kind`, `status` and `ref` that `deploy-wait` returned. The next repo ships only after this one's deploy has status `succeeded`. A merge refused with `review-stale` reopens the code stage for another round. A step the config does not describe, such as an infrastructure change, follows the project's own ship procedure inside the turn, or is waited for with a `command` deploy.
+4. For each changed repo in `shipOrder`, which lists every repo of the project: `bollplank merge --run`, which merges only the ticket's own PR from the ticket branch, then `bollplank deploy-wait` on the merge commit, then `bollplank run deploy` with the `kind`, `status` and `ref` that `deploy-wait` returned. The next repo ships only after this one's deploy has status `succeeded`. A merge refused with `review-stale` reopens the code stage for another round. A step the config does not describe, such as an infrastructure change, follows the project's own ship procedure inside the turn, or is waited for with a `command` deploy.
 5. `bollplank turn release`, never while a started deploy has no known end.
 
 A failed deploy is recorded, the turn is released, the remaining repos are not merged, and the ticket stays in progress.

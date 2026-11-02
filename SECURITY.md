@@ -28,9 +28,15 @@ Known limits:
 
 `bollplank init` and `bollplank doctor` start one short headless run per client to check that it can read Linear. The probe passes only when a Linear tool call really happened and returned what the reply claims.
 
-- **Claude Code** gets no built in tools, and only the tools of its Linear servers whose names start with `list`, `get`, `search` or `read` are allowed, by name prefix. Nothing is saved as a session.
-- **Codex** runs ephemeral, in a read only sandbox, signed in with ChatGPT only. Only its prompt tells it to read and change nothing.
-- For both, a probe that called a Linear tool whose name does not list, get, search or read fails, whatever it returned. For Codex that check comes after the call, so it reports a write but cannot prevent one.
+Each probe is set up so that it cannot write before it starts:
+
+- **Claude Code** gets no built in tools, and only the tools of its Linear servers and connectors whose names start with `list`, `get`, `search` or `read` are allowed, by name prefix. It runs with `--permission-mode dontAsk` and `--permission-prompts none`, so any other tool is denied without a prompt, and with `--setting-sources local` in its empty neutral folder, so no allow rule or default mode from your user or project settings can let another tool through. Nothing is saved as a session.
+- Claude Code's other MCP servers still load. `--strict-mcp-config` would drop every server not given in `--mcp-config`, and the claude.ai Linear connector is an account connector that cannot be given there, so it would drop Linear too. Their tools are denied as above.
+- **Codex** runs ephemeral, with the critic's isolation: a read only sandbox, ChatGPT sign in only, `model_provider` pinned, connectors (apps), plugins and the other tool features off, and `web_search` disabled. Every MCP server it lists is switched off by name except those whose names say Linear, and each of those offers only `list_teams`, `get_team`, `list_issue_statuses`, `get_issue_status`, `list_projects` and `get_project`, through Codex's per server allow list `enabled_tools`. Before the turn starts, `codex mcp list --json` must show only the Linear servers on and `codex mcp get <server> --json` must show exactly that allow list, or the probe does not run.
+- A ChatGPT connector cannot be narrowed to read tools, so Codex is never probed through one. When Linear reaches Codex only as a connector, the probe does not run and says to add Linear's MCP server.
+- For both, a probe that called any tool that is not a Linear read, whatever its service, fails, whatever it returned.
+
+Known limits: the Linear servers are picked by name, so a server named like Linear that is not Linear gets the same read only allowance. A Linear tool whose name starts with a read verb but writes would pass the name check, and for Claude Code it would be allowed.
 
 ## Scope
 

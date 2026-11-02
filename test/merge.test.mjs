@@ -6,7 +6,8 @@ import { join } from 'node:path';
 import { sandbox, gitRepo, acmeConfig, fakesSkip } from './helpers.mjs';
 
 // A fake gh that answers pr view from a state file, records every call, and on pr merge marks
-// the PR merged when --match-head-commit names its head.
+// the PR merged when --match-head-commit names its head. state.repos holds a PR per -R slug,
+// else state.pr is the one PR.
 const fakeGh = `
 const fs = require('fs');
 const a = process.argv.slice(2);
@@ -14,13 +15,15 @@ const file = process.env.FAKE_GH_STATE;
 const state = JSON.parse(fs.readFileSync(file, 'utf8'));
 fs.appendFileSync(process.env.FAKE_GH_LOG, JSON.stringify(a) + '\\n');
 if (state.fail) { process.stderr.write(state.fail + '\\n'); process.exit(1); }
+const slug = a[a.indexOf('-R') + 1];
+const pr = state.repos ? state.repos[slug] : state.pr;
 if (a[0] === 'pr' && a[1] === 'view') {
   const fields = a[a.indexOf('--json') + 1].split(',');
-  console.log(JSON.stringify(Object.fromEntries(fields.map((f) => [f, state.pr[f]]))));
+  console.log(JSON.stringify(Object.fromEntries(fields.map((f) => [f, pr[f]]))));
 } else if (a[0] === 'pr' && a[1] === 'merge') {
-  if (a[a.indexOf('--match-head-commit') + 1] !== state.pr.headRefOid) { process.stderr.write('head moved\\n'); process.exit(1); }
-  state.pr.state = 'MERGED';
-  state.pr.mergeCommit = { oid: 'f'.repeat(40) };
+  if (a[a.indexOf('--match-head-commit') + 1] !== pr.headRefOid) { process.stderr.write('head moved\\n'); process.exit(1); }
+  pr.state = 'MERGED';
+  pr.mergeCommit = { oid: pr.mergeOid || 'f'.repeat(40) };
   fs.writeFileSync(file, JSON.stringify(state));
 } else { process.stderr.write('unexpected gh call\\n'); process.exit(1); }
 `;
@@ -55,11 +58,11 @@ function setup(t, extra = {}) {
     { name: 'checks', status: 'COMPLETED', conclusion: 'SUCCESS' },
     { name: 'lint', status: 'COMPLETED', conclusion: 'SUCCESS' },
   ];
-  const state = (pr = {}, more = {}) => writeFileSync(stateFile, JSON.stringify({ pr: { state: 'OPEN', isDraft: false, baseRefName: 'main', headRefOid: head, statusCheckRollup: green, title: 'Add the feature', body: 'Plain body.', ...pr }, ...more }));
+  const state = (pr = {}, more = {}) => writeFileSync(stateFile, JSON.stringify({ pr: { state: 'OPEN', isDraft: false, baseRefName: 'main', headRefOid: head, headRefName: 'acme-1-feature', statusCheckRollup: green, title: 'Add the feature', body: 'Plain body.', ...pr }, ...more }));
   state();
   const runFolder = join(s.root, 'tickets', 'ACME-1');
   // The run record and the ticket folder record that ticket create writes.
-  const runRecord = (stages, run = {}, ticket = { project: 'acme-shop', ticket: 'ACME-1', repos: { 'acme-api': { kind: 'change' } } }) => {
+  const runRecord = (stages, run = {}, ticket = { project: 'acme-shop', ticket: 'ACME-1', branch: 'acme-1-feature', repos: { 'acme-api': { kind: 'change' } } }) => {
     mkdirSync(runFolder, { recursive: true });
     writeFileSync(join(runFolder, '.run.json'), JSON.stringify({ project: 'acme-shop', ticket: 'ACME-1', stages, repos: {}, ...run }));
     if (ticket) writeFileSync(join(runFolder, '.ticket.json'), JSON.stringify(ticket));
@@ -178,6 +181,182 @@ test('merge with a code review merges a clean rebase of the approved change and 
   assert.equal(r.json.finalHead, rebased);
   assert.equal(r.json.review.approved, approved);
   assert.equal(r.json.review.approvedPatchId, r.json.review.headPatchId);
+});
+
+test('merge with --run refuses another ticket\'s green PR, with no review stage selected', { skip: fakesSkip }, (t) => {
+  const f = setup(t);
+  const none = { plan: stage(false, false), code: stage(false, false) };
+  f.runRecord(none);
+  f.state({ headRefName: 'acme-2-other' });
+  let r = f.merge('--run', f.runFolder);
+  assert.equal(r.status, 1, r.stdout);
+  assert.equal(r.json.failure, 'run-mismatch');
+  assert.match(r.json.detail, /PR #7 is from the branch acme-2-other, not the ticket branch acme-1-feature/);
+  // A ticket folder record without its branch cannot be matched either.
+  f.state();
+  f.runRecord(none, {}, { project: 'acme-shop', ticket: 'ACME-1', repos: { 'acme-api': { kind: 'change' } } });
+  r = f.merge('--run', f.runFolder);
+  assert.equal(r.json.failure, 'run-mismatch');
+  assert.match(r.json.detail, /names no ticket branch/);
+  // Once a PR is recorded for the repo, only that PR merges for it.
+  f.runRecord(none, { repos: { 'acme-api': { pr: 9 } } });
+  r = f.merge('--run', f.runFolder);
+  assert.equal(r.json.failure, 'run-mismatch');
+  assert.match(r.json.detail, /the run record has PR #9 for acme-api, not #7/);
+  assert.equal(f.merged(), false);
+  // The ticket's own PR merges.
+  f.runRecord(none);
+  r = f.merge('--run', f.runFolder);
+  assert.equal(r.status, 0, r.stdout);
+  assert.ok(f.calls().find((a) => a[1] === 'view')[f.calls().find((a) => a[1] === 'view').indexOf('--json') + 1].split(',').includes('headRefName'));
+});
+
+test('a code review keeps whitespace: a Python line moved into or out of an if needs a new review, and a clean rebase passes', { skip: fakesSkip }, (t) => {
+  const f = setup(t);
+  f.api.commit('app.py', 'def total(x):\n    if x:\n        a = 1\n    return x\n');
+  f.api.git('push', '-q', 'origin', 'main');
+  f.out('fetch', '-q', 'origin');
+  const branch = (name, text) => {
+    f.out('checkout', '-q', '-B', name, 'origin/main');
+    writeFileSync(join(f.contrib, 'app.py'), text);
+    f.out('commit', '-q', '-a', '-m', 'Log the total');
+    f.out('push', '-q', '-f', 'origin', `HEAD:refs/heads/${name}`);
+    return f.out('rev-parse', 'HEAD');
+  };
+  const inside = branch('acme-1-inside', 'def total(x):\n    if x:\n        a = 1\n        log(x)\n    return x\n');
+  const outside = branch('acme-1-outside', 'def total(x):\n    if x:\n        a = 1\n    log(x)\n    return x\n');
+  // The two changes differ only in indentation, so a patch id that ignores whitespace takes one for the other.
+  const stable = (sha) => execFileSync('git', ['-C', f.api.work, 'patch-id', '--stable'], { input: execFileSync('git', ['-C', f.contrib, 'diff', 'origin/main', sha]), encoding: 'utf8' }).split(' ')[0];
+  assert.equal(stable(inside), stable(outside));
+  for (const [approved, head] of [[inside, outside], [outside, inside]]) {
+    f.out('push', '-q', '-f', 'origin', `${head}:refs/pull/7/head`);
+    f.state({ headRefOid: head });
+    f.runRecord({ plan: stage(false, false), code: stage(true, true, approved) });
+    const r = f.merge('--run', f.runFolder);
+    assert.equal(r.status, 1, r.stdout);
+    assert.equal(r.json.failure, 'review-stale');
+    assert.notEqual(r.json.review.approvedPatchId, r.json.review.headPatchId);
+  }
+  assert.equal(f.merged(), false);
+  // The base moves and the reviewed change is rebased onto it without conflicts: it still merges.
+  f.api.commit('other.txt', 'other work\n');
+  f.api.git('push', '-q', 'origin', 'main');
+  f.out('fetch', '-q', 'origin');
+  f.out('checkout', '-q', 'acme-1-inside');
+  f.out('rebase', '-q', 'origin/main');
+  const rebased = f.out('rev-parse', 'HEAD');
+  assert.notEqual(rebased, inside);
+  f.out('push', '-q', '-f', 'origin', `${rebased}:refs/pull/7/head`);
+  f.state({ headRefOid: rebased });
+  f.runRecord({ plan: stage(false, false), code: stage(true, true, inside) });
+  const r = f.merge('--run', f.runFolder);
+  assert.equal(r.status, 0, r.stdout);
+  assert.equal(r.json.review.approvedPatchId, r.json.review.headPatchId);
+});
+
+test('a git without patch-id --verbatim fails the review check closed', { skip: fakesSkip }, (t) => {
+  const f = setup(t);
+  f.out('push', '-q', 'origin', 'HEAD:refs/heads/acme-1-feature');
+  // A git that refuses --verbatim, as one older than 2.40 does, and passes every other call on.
+  const real = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  f.s.fake('git', `
+const a = process.argv.slice(2);
+if (a.includes('patch-id') && a.includes('--verbatim')) { process.stderr.write("error: unknown option \`verbatim'\\n"); process.exit(129); }
+const r = require('child_process').spawnSync(${JSON.stringify(real)}, a, { stdio: 'inherit' });
+process.exit(r.status ?? 1);
+`);
+  f.runRecord({ plan: stage(false, false), code: stage(true, true, f.head) });
+  const r = f.merge('--run', f.runFolder);
+  assert.equal(r.status, 1, r.stdout);
+  assert.equal(r.json.failure, 'review-stale');
+  assert.match(r.json.detail, /no `git patch-id --verbatim`/);
+  assert.equal(f.merged(), false);
+});
+
+test('one ticket reviews and ships two repos, each merged on its own reviewed head and checked as shipped', { skip: fakesSkip }, (t) => {
+  const s = sandbox();
+  t.after(s.clean);
+  const source = join(s.root, 'src');
+  mkdirSync(source, { recursive: true });
+  const repos = {};
+  for (const name of ['acme-api', 'acme-web']) {
+    const r = gitRepo(source, name, 'main');
+    r.commit('README.md', `${name}\n`);
+    r.git('push', '-q', '-u', 'origin', 'main');
+    repos[name] = { github: `acme/${name}`, checks: ['checks'], baseBranch: 'main', deploy: { kind: 'none' } };
+  }
+  const tickets = join(s.root, 'tickets');
+  s.config(acmeConfig(source, tickets, repos, { shipOrder: ['acme-api', 'acme-web'] }));
+  s.fake('gh', fakeGh);
+  const stateFile = join(s.root, 'gh-state.json');
+  const logFile = join(s.root, 'gh-log.jsonl');
+  writeFileSync(logFile, '');
+  const env = { FAKE_GH_STATE: stateFile, FAKE_GH_LOG: logFile };
+  const bollplank = (...a) => s.run(a, env);
+  let r = bollplank('ticket', 'create', 'acme-shop', 'ACME-1', '--slug', 'two', '--change', 'acme-api,acme-web');
+  assert.equal(r.status, 0, r.stdout);
+  const folder = join(tickets, 'ACME-1');
+  // Each repo gets its change on the ticket branch and a PR head on the remote: #7 and #8.
+  const heads = {};
+  const prs = { 'acme-api': 7, 'acme-web': 8 };
+  const state = { repos: {} };
+  for (const name of ['acme-api', 'acme-web']) {
+    const wt = join(folder, name);
+    const g = (...a) => execFileSync('git', ['-C', wt, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    writeFileSync(join(wt, 'feature.txt'), `${name} feature\n`);
+    g('add', 'feature.txt');
+    g('commit', '-q', '-m', 'Add the feature');
+    g('push', '-q', 'origin', 'HEAD:refs/heads/acme-1-two', `HEAD:refs/pull/${prs[name]}/head`);
+    heads[name] = g('rev-parse', 'HEAD');
+    state.repos[`acme/${name}`] = { state: 'OPEN', isDraft: false, baseRefName: 'main', headRefOid: heads[name], headRefName: 'acme-1-two', statusCheckRollup: [{ name: 'checks', status: 'COMPLETED', conclusion: 'SUCCESS' }], title: 'Add the feature', body: '', mergeOid: (name === 'acme-api' ? 'a' : 'b').repeat(40) };
+  }
+  writeFileSync(stateFile, JSON.stringify(state));
+  assert.equal(bollplank('run', 'init', 'acme-shop', 'ACME-1', '--review', 'code').status, 0);
+  // One plain revision cannot name the heads of two repos, and a pair must name a changed repo.
+  r = bollplank('run', 'stage', 'acme-shop', 'ACME-1', 'code', '--revision', heads['acme-api'], '--verdict', 'Approve');
+  assert.equal(r.status, 2);
+  assert.match(r.json.detail, /this ticket changes acme-api, acme-web, so name the reviewed head of each with --revisions/);
+  assert.equal(bollplank('run', 'stage', 'acme-shop', 'ACME-1', 'code', '--revisions', 'acme-nope=abc1234', '--verdict', 'Approve').status, 2);
+  assert.equal(bollplank('run', 'stage', 'acme-shop', 'ACME-1', 'code', '--revisions', 'acme-api', '--verdict', 'Approve').status, 2);
+  assert.equal(bollplank('run', 'stage', 'acme-shop', 'ACME-1', 'code', '--revision', 'x', '--revisions', `acme-api=${heads['acme-api']}`, '--verdict', 'Approve').status, 2);
+  // A round that names only acme-api approves only acme-api.
+  r = bollplank('run', 'stage', 'acme-shop', 'ACME-1', 'code', '--revisions', `acme-api=${heads['acme-api']}`, '--verdict', 'Approve');
+  assert.equal(r.json.complete, true, r.stdout);
+  r = bollplank('merge', 'acme-shop', 'acme-web', '8', '--run', folder);
+  assert.equal(r.status, 1, r.stdout);
+  assert.equal(r.json.failure, 'review-stale');
+  assert.match(r.json.detail, /names no reviewed head for acme-web/);
+  // The next round names both heads, and each repo merges on its own entry.
+  bollplank('run', 'reopen', 'acme-shop', 'ACME-1', 'code', '--reason', 'acme-web was not reviewed');
+  r = bollplank('run', 'stage', 'acme-shop', 'ACME-1', 'code', '--revisions', `acme-api=${heads['acme-api']},acme-web=${heads['acme-web']}`, '--verdict', 'Approve');
+  assert.equal(r.json.complete, true, r.stdout);
+  const rec = () => JSON.parse(readFileSync(join(folder, '.run.json'), 'utf8'));
+  assert.deepEqual(rec().stages.code.rounds.at(-1).revisions, { 'acme-api': heads['acme-api'], 'acme-web': heads['acme-web'] });
+  r = bollplank('merge', 'acme-shop', 'acme-api', '7', '--run', folder);
+  assert.equal(r.status, 0, r.stdout);
+  assert.equal(r.json.review.approved, heads['acme-api']);
+  // Nothing is shipped until every changed repo is merged and its merge commit deployed.
+  r = bollplank('run', 'check-shipped', 'acme-shop', 'ACME-1');
+  assert.equal(r.status, 1, r.stdout);
+  assert.equal(r.json.failure, 'not-shipped');
+  assert.match(r.json.detail, /acme-api has no deploy recorded for its merge commit a{12}\. acme-web is not merged\./);
+  r = bollplank('merge', 'acme-shop', 'acme-web', '8', '--run', folder);
+  assert.equal(r.status, 0, r.stdout);
+  assert.equal(r.json.review.approved, heads['acme-web']);
+  bollplank('run', 'deploy', 'acme-shop', 'ACME-1', 'acme-api', '--kind', 'none', '--status', 'succeeded', '--ref', 'none', '--commit', 'a'.repeat(40));
+  // A deploy of another commit, or one still running, does not count.
+  bollplank('run', 'deploy', 'acme-shop', 'ACME-1', 'acme-web', '--kind', 'none', '--status', 'succeeded', '--ref', 'old', '--commit', 'c'.repeat(40));
+  bollplank('run', 'deploy', 'acme-shop', 'ACME-1', 'acme-web', '--kind', 'none', '--status', 'running', '--ref', 'none', '--commit', 'b'.repeat(40));
+  r = bollplank('run', 'check-shipped', 'acme-shop', 'ACME-1');
+  assert.equal(r.json.failure, 'not-shipped');
+  assert.match(r.json.detail, /^acme-web's last deploy of b{12} is running\.$/);
+  assert.equal(r.json.repos['acme-api'].deployed, true);
+  bollplank('run', 'deploy', 'acme-shop', 'ACME-1', 'acme-web', '--kind', 'none', '--status', 'succeeded', '--ref', 'none', '--commit', 'b'.repeat(40));
+  r = bollplank('run', 'check-shipped', 'acme-shop', 'ACME-1');
+  assert.equal(r.status, 0, r.stdout);
+  assert.equal(r.json.shipped, true);
+  assert.deepEqual(Object.keys(r.json.repos), ['acme-api', 'acme-web']);
+  assert.deepEqual([rec().repos['acme-api'].pr, rec().repos['acme-web'].pr], [7, 8]);
 });
 
 test('a gh failure comes back as JSON', { skip: fakesSkip }, (t) => {

@@ -24,7 +24,7 @@ const state = process.env.FAKE_STATE;
 const log = (x) => fs.appendFileSync(path.join(state, 'calls.jsonl'), JSON.stringify({ tool: 'claude', args, ...x }) + '\\n');
 log({});
 const added = fs.existsSync(path.join(state, 'claude-linear-added'));
-const linear = added ? 'added' : process.env.FAKE_LINEAR || 'none';
+const linear = added ? 'added' : process.env.FAKE_LINEAR_CLAUDE || process.env.FAKE_LINEAR || 'none';
 ${TEAMS}
 if (args[0] === '--version') { console.log('2.1.312 (Claude Code)'); process.exit(0); }
 if (args[0] === 'auth') {
@@ -82,7 +82,11 @@ const state = process.env.FAKE_STATE;
 const log = (x) => fs.appendFileSync(path.join(state, 'calls.jsonl'), JSON.stringify({ tool: 'codex', args, ...x }) + '\\n');
 log({});
 const added = fs.existsSync(path.join(state, 'codex-linear-added'));
-const linear = added ? 'added' : process.env.FAKE_LINEAR || 'none';
+const linear = added ? 'added' : process.env.FAKE_LINEAR_CODEX || process.env.FAKE_LINEAR || 'none';
+// A configured server named linear, unless Linear is missing or reaches Codex only as a connector.
+const servers = [...(['none', 'connector'].includes(linear) ? [] : ['linear']), 'acme_files'];
+const off = (n) => args.includes('mcp_servers.' + n + '.enabled=false');
+const allowed = (n) => { const a = args.find((x) => x.startsWith('mcp_servers.' + n + '.enabled_tools=')); return a ? JSON.parse(a.slice(a.indexOf('=') + 1)) : null; };
 ${TEAMS}
 if (args[0] === '--version') { console.log('codex-cli 0.166.0-alpha.5.1'); process.exit(0); }
 if (args[0] === 'login' && args[1] === 'status') {
@@ -91,9 +95,14 @@ if (args[0] === 'login' && args[1] === 'status') {
   process.exit(auth === 'out' ? 1 : 0);
 }
 if (args[0] === 'mcp') {
-  // The critic lists the configured servers to switch each one off. This fake has none.
-  if (args[1] === 'list') { console.log('[]'); process.exit(0); }
-  if (args[1] === 'get') process.exit(added ? 0 : 1);
+  // The critic and the probe list the configured servers to switch them off, and read back the
+  // tools a kept server offers.
+  if (args[1] === 'list') { console.log(JSON.stringify(servers.map((name) => ({ name, enabled: !off(name) })))); process.exit(0); }
+  if (args[1] === 'get') {
+    if (!servers.includes(args[2])) process.exit(1);
+    console.log(JSON.stringify({ name: args[2], enabled: !off(args[2]), enabled_tools: allowed(args[2]), disabled_tools: null }));
+    process.exit(0);
+  }
   if (args[1] === 'add') { fs.writeFileSync(path.join(state, 'codex-linear-added'), ''); process.exit(0); }
   if (args[1] === 'login') process.exit(0);
   process.exit(2);
@@ -112,11 +121,16 @@ process.stdin.on('end', () => {
     emit({ type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } });
     return;
   }
-  if (linear === 'real' || linear === 'added' || linear === 'error') {
-    const failed = linear === 'error';
-    const server = linear === 'added' ? 'linear' : 'codex_apps';
-    emit({ type: 'item.started', item: { id: 'item_1', type: 'mcp_tool_call', server, tool: 'linear_list_teams', arguments: {}, status: 'in_progress' } });
-    emit({ type: 'item.completed', item: { id: 'item_1', type: 'mcp_tool_call', server, tool: 'linear_list_teams', arguments: {}, result: failed ? null : { content: [{ type: 'text', text: TEAMS_TEXT }] }, error: failed ? { message: 'Linear answered 401' } : null, status: failed ? 'failed' : 'completed' } });
+  // The connector answers only while apps are on. The server offers a tool only when it is allowed.
+  const connector = linear === 'connector' && !args.includes('apps');
+  if (['real', 'added', 'error', 'slack'].includes(linear) || connector) {
+    const server = connector ? 'codex_apps' : 'linear';
+    const tool = connector ? 'linear_list_teams' : 'list_teams';
+    const offered = connector || (!off('linear') && (allowed('linear') ?? [tool]).includes(tool));
+    const failed = linear === 'error' || !offered;
+    emit({ type: 'item.started', item: { id: 'item_1', type: 'mcp_tool_call', server, tool, arguments: {}, status: 'in_progress' } });
+    emit({ type: 'item.completed', item: { id: 'item_1', type: 'mcp_tool_call', server, tool, arguments: {}, result: failed ? null : { content: [{ type: 'text', text: TEAMS_TEXT }] }, error: failed ? { message: offered ? 'Linear answered 401' : 'unknown tool' } : null, status: failed ? 'failed' : 'completed' } });
+    if (linear === 'slack') emit({ type: 'item.completed', item: { id: 'item_3', type: 'mcp_tool_call', server: 'acme_slack', tool: 'send_message', arguments: {}, result: { content: [] }, status: 'completed' } });
   }
   emit({ type: 'item.completed', item: { id: 'item_2', type: 'agent_message', text: linear === 'none' ? '{"error":"no Linear tool"}' : REPLY } });
   emit({ type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } });
@@ -177,6 +191,59 @@ test('doctor runs a Linear read and a critic dry run per configured critic when 
   assert.match(d['critic.claude'].detail, /not in the critique format/);
   assert.equal(d.linear.ok, false);
   assert.match(d['linear.codex'].fix, /codex mcp add linear --url https:\/\/mcp\.linear\.app\/mcp/);
+});
+
+test('doctor fails a missing board status and a client that cannot read Linear, each with a fix', { skip: fakesSkip }, (t) => {
+  const b = box(t);
+  b.install();
+  // Both clients read Linear and see every name in the config.
+  let c = byId(b.doctor());
+  for (const id of ['board.team.ACME', 'board.project.ACME.Shop', 'board.status.ACME.draft', 'board.status.ACME.acceptance', 'board.status.ACME.done']) assert.equal(c[id]?.ok, true, id);
+  // The team has no Acceptance status.
+  let r = b.doctor(['--json'], { FAKE_STATUSES: 'Draft,Ready,In Progress,Done' });
+  assert.equal(r.status, 1, r.stdout);
+  c = byId(r);
+  assert.equal(c['board.status.ACME.acceptance'].ok, false);
+  assert.equal(c['board.status.ACME.acceptance'].required, true);
+  assert.match(c['board.status.ACME.acceptance'].detail, /ACME has no status named "Acceptance" that Claude Code or Codex can read/);
+  assert.match(c['board.status.ACME.acceptance'].fix, /Settings, then Teams, then ACME, then Workflow\. Under Started, add a status named "Acceptance"\. Or set board\.statuses\.acceptance/);
+  assert.equal(c['board.status.ACME.done'].ok, true);
+  // Codex cannot read Linear while Claude Code can. Either may lead, so it fails.
+  r = b.doctor(['--json'], { FAKE_LINEAR_CODEX: 'error' });
+  assert.equal(r.status, 1, r.stdout);
+  c = byId(r);
+  assert.equal(c['linear.claude'].ok, true);
+  assert.equal(c['linear.codex'].ok, false);
+  assert.equal(c['linear.codex'].required, true);
+  assert.match(c['linear.codex'].fix, /codex mcp add linear --url/);
+  assert.equal(c.linear.ok, false);
+  assert.match(c.linear.detail, /Codex could not read Linear/);
+  // The board is still checked against the client that reads it.
+  assert.equal(c['board.team.ACME'].ok, true);
+  // A configured team or project that Linear does not have fails as well.
+  const file = join(b.s.bollplank, 'config.json');
+  const config = JSON.parse(readFileSync(file, 'utf8'));
+  writeFileSync(file, JSON.stringify({ ...config, board: { ...config.board, project: 'Gadgets' } }));
+  c = byId(b.doctor());
+  assert.equal(c['board.project.ACME.Gadgets'].ok, false);
+  assert.match(c['board.project.ACME.Gadgets'].fix, /Create the project Gadgets in ACME in Linear, or set board\.project/);
+  writeFileSync(file, JSON.stringify({ ...config, board: { ...config.board, team: 'GLOBEX' } }));
+  c = byId(b.doctor());
+  assert.equal(c['board.team.GLOBEX'].ok, false);
+  assert.equal(c['board.status.GLOBEX.done'], undefined);
+});
+
+test('doctor runs a dry run for each critic default a project sets', { skip: fakesSkip }, (t) => {
+  const b = box(t);
+  b.install();
+  const file = join(b.s.bollplank, 'config.json');
+  const config = JSON.parse(readFileSync(file, 'utf8'));
+  writeFileSync(file, JSON.stringify({ ...config, critic: { default: 'codex' }, projects: { 'acme-shop': { source: b.s.root, tickets: join(b.s.root, 'tickets'), repos: { 'acme-api': { github: 'acme/acme-api', checks: ['checks'] } }, critic: { default: 'claude' } } } }));
+  const c = byId(b.doctor(['--json', '--offline']));
+  assert.equal(c['critic.codex'].skipped, true);
+  assert.equal(c['critic.claude'].skipped, true);
+  assert.equal(c['client.claude'].required, true);
+  assert.equal(c['client.codex'].required, true);
 });
 
 test('doctor reports each failure with a fix and exits 1', { skip: fakesSkip }, (t) => {

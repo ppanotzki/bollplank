@@ -76,6 +76,27 @@ test('stages, gates, reopen, plan, log and show keep the record', (t) => {
   assert.deepEqual(rec, f.record());
 });
 
+test('a code round with one revision names the head of the one changed repo, and check-shipped needs it merged and deployed', (t) => {
+  const f = setup(t);
+  mkdirSync(f.folder, { recursive: true });
+  writeFileSync(join(f.folder, '.ticket.json'), JSON.stringify({ project: 'acme-shop', ticket: 'ACME-1', branch: 'acme-1-x', repos: { 'acme-api': { kind: 'change' } } }));
+  f.run('init', 'acme-shop', 'ACME-1', '--review', 'both');
+  assert.equal(f.run('stage', 'acme-shop', 'ACME-1', 'code', '--revision', 'abc1234', '--verdict', 'Approve').status, 0);
+  assert.deepEqual(f.record().stages.code.rounds[0].revisions, { 'acme-api': 'abc1234' });
+  assert.match(f.run('stage', 'acme-shop', 'ACME-1', 'plan', '--revisions', 'acme-api=abc1234', '--verdict', 'Approve').json.detail, /--revisions is for a code round/);
+  let r = f.run('check-shipped', 'acme-shop', 'ACME-1');
+  assert.equal(r.status, 1);
+  assert.equal(r.json.failure, 'not-shipped');
+  assert.equal(r.json.detail, 'acme-api is not merged.');
+  writeFileSync(join(f.folder, '.run.json'), JSON.stringify({ ...f.record(), repos: { 'acme-api': { merged: true, pr: 7, mergeCommit: 'd'.repeat(40) } } }));
+  f.run('deploy', 'acme-shop', 'ACME-1', 'acme-api', '--kind', 'github-actions', '--ref', '41', '--commit', 'd'.repeat(40), '--status', 'failed');
+  assert.match(f.run('check-shipped', 'acme-shop', 'ACME-1').json.detail, /last deploy of d{12} is failed/);
+  f.run('deploy', 'acme-shop', 'ACME-1', 'acme-api', '--kind', 'github-actions', '--ref', '42', '--commit', 'D'.repeat(12), '--status', 'succeeded');
+  r = f.run('check-shipped', 'acme-shop', 'ACME-1');
+  assert.equal(r.status, 0, r.stdout);
+  assert.equal(r.json.repos['acme-api'].deploy.ref, '42');
+});
+
 test('run refuses unknown commands, bad ticket ids and a missing record', (t) => {
   const f = setup(t);
   assert.equal(f.run('show', 'acme-shop', 'ACME-1').json.failure, 'no-run');

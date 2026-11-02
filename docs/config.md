@@ -49,7 +49,7 @@ Paths may start with `~/` for your home folder. A relative path in the config, f
 - `same` is the lead's own provider in a separate session. See [same-model.md](same-model.md).
 - `claude` or `codex` names one. When it equals the lead, the review counts as same provider.
 
-A brief can name its critic in a `Critic:` header line, which wins for that ticket once approved. `bollplank critic --critic` overrides the default for one call. Nothing switches the critic on its own. When the chosen client is missing or not signed in with a subscription, the call fails with `critic-unavailable`.
+A project can set its own `critic.default`, which wins over the top level one for its tickets. `bollplank context <project>` shows the one that applies, and `bollplank critic --project <name>` uses it. A brief can name its critic in a `Critic:` header line, which wins over both for that ticket once approved. `bollplank critic --critic` overrides the defaults for one call. Nothing switches the critic on its own. When the chosen client is missing or not signed in with a subscription, the call fails with `critic-unavailable`.
 
 `model` and `effort` are passed to the client. Nothing is pinned by default, so the client runs its own default model. The posted critique's `Model:` line is the model the client reported it ran, with the effort it was given. When the client reports none, the line is the pinned `model` and `effort`, and with no pin it reads `Unverified`. With a pinned model, a Claude Code line names the pin. See [commands.md](commands.md#bollplank-critic).
 
@@ -66,7 +66,8 @@ Only one ticket ships at a time on a machine. The lock is a folder with a `holde
 | `tickets` | yes | | The folder for ticket folders and run records. |
 | `repos` | repository: yes | `{}` | The repos, by name. A repository project needs at least one. A configuration project has none. |
 | `validatesAgainst` | no | `{}` | For each repo, the repos its changes are validated against. They are checked out alongside, read only. |
-| `shipOrder` | no | the order of `repos` | The order repos merge and deploy in. |
+| `shipOrder` | no | the order of `repos` | The order repos merge and deploy in. When given, it lists every configured repo exactly once, so no repo a ticket changes can be left out of a ship. |
+| `critic.default` | no | the top level `critic.default` | `other`, `same`, `claude` or `codex`, for this project's tickets. |
 | `board.team`, `board.project` | no | the top level `board.team` and `board.project` | The Linear team key and project name for this project's issues. |
 | `board.teamId`, `board.projectId` | consulting and configuration: yes | | The Linear ids the run helper compares a readback against. |
 | `runs` | no | `false` | Ticket runs are allowed only when this is `true`. |

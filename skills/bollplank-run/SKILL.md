@@ -50,13 +50,13 @@ A stop is a question to the approver, not a failure. Record it with `bollplank r
    - Gate cadence: while iterating on fixes, run only the gates for the area changed. Run the full suite once per repo, under the runtime version CI uses, before that repo's first push. After that, the PR check is the full run.
    - A bug hunter looks for edge cases.
    - Fix related small bugs. Note big or unrelated ones for the report.
-8. **Code gate.** If the code stage is selected, run the critic on the diff's head commit, with rounds recorded as in step 5 under `code`. Any later change to covered behaviour means `bollplank run reopen <project> <TICKET> code --reason <text>` and another round. `bollplank merge` refuses while the stage is incomplete.
+8. **Code gate.** If the code stage is selected, run the critic on the diff's head commits, with rounds recorded as in step 5 under `code`. A code round names the reviewed head of each changed repo: `bollplank run stage <project> <TICKET> code --revisions <repo>=<sha>,<repo>=<sha> --verdict <v> --points <n>`. `--revision <sha>` is enough when the ticket changes one repo. `bollplank merge` checks each repo's PR against its own entry. Any later change to covered behaviour means `bollplank run reopen <project> <TICKET> code --reason <text>` and another round. `bollplank merge` refuses while the stage is incomplete.
 9. **PRs.** Push each changed repo's ticket branch and open one PR per repo. Wait for every check to pass. Fix failures on the branch. GitHub runs no check on a PR that conflicts with its base (`gh pr view --json mergeable` says CONFLICTING), so never wait on one: rebase that branch on the latest base branch now, keep both sides' additions in shared files, rerun the local gates, and force push. A rebase with no conflicts needs no local rerun. A resolution that changes behaviour reopens a selected code stage.
 10. **Ship.** Follow bollplank-ship. Unless the approver said "hold for acceptance", ship as soon as the work is complete.
 11. **Release note and report.**
     - The release note is a comment titled "Release note", with your Model and Workflow lines, in plain product language. bollplank-accept later copies it into the project's "Release notes" document.
     - The report covers what shipped, deviations from the plan, bugs fixed, bugs found for the approver's decision, Known edge cases, and an acceptance checklist of three to five items.
-12. **Acceptance.** Move the issue to the acceptance status only when every deploy recorded in `bollplank run show` has status `succeeded`. A failed deploy keeps it in progress with a clear report.
+12. **Acceptance.** Move the issue to the acceptance status only when `bollplank run check-shipped <project> <TICKET>` exits 0: every repo the ticket changes is merged and the deploy of its merge commit has status `succeeded`. A `not-shipped` result names what is missing. A failed deploy keeps it in progress with a clear report.
 
 ## Resuming
 

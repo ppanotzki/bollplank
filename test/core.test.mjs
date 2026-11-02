@@ -39,6 +39,13 @@ test('validation names each problem and never accepts a repo without checks', ()
   c.projects['acme-advice'].ticketPrefix = 'adv';
   const p = validate(c).join('\n');
   for (const want of ['approver.name', 'critic.default', 'acme-api.checks', 'amplify needs appId and region', 'shipOrder', 'ticketPrefix']) assert.match(p, new RegExp(want.replace('.', '\\.')));
+  // A ship order lists every configured repo exactly once.
+  for (const [order, want] of [[['acme-api'], /shipOrder: must list every configured repo exactly once \(acme-api, acme-web\)/], [['acme-api', 'acme-web', 'acme-api'], /exactly once/], [['acme-web', 'acme-api'], null]]) {
+    const d = example();
+    d.projects['acme-shop'].shipOrder = order;
+    if (want) assert.match(validate(d).join('\n'), want);
+    else assert.deepEqual(validate(d), []);
+  }
   const conf = { ...example(), projects: { cfg: { mode: 'configuration', source: '/s', tickets: '/t', repos: { r: { github: 'a/b', checks: ['c'] } } } } };
   assert.match(validate(conf).join('\n'), /configuration mode cannot select repositories/);
 });

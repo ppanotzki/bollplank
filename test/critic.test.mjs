@@ -129,8 +129,9 @@ function box({ clients = ['claude', 'codex'], critic = undefined } = {}) {
   writeFileSync(prompt, 'Critique brief v1 for ticket ACME-1.\nReviewer: {REVIEWER}\nModel: {MODEL}\nWorkflow: {WORKFLOW}\nThe subject follows.\nAcme ships widgets.\n');
   const base = { PATH: [s.fakes, tools].join(delimiter), BOLLPLANK_APPS_DIR: join(s.root, 'apps'), FAKE_CAPTURE: capture };
   const call = (opts = {}, extraEnv = {}) => {
-    const { subject = 'brief', round = 1, lead = 'claude', critic: c, readDir, timeout, promptFile = prompt, ticket = 'ACME-1', newSession } = opts;
+    const { subject = 'brief', round = 1, lead = 'claude', critic: c, project, readDir, timeout, promptFile = prompt, ticket = 'ACME-1', newSession } = opts;
     const args = ['critic', '--ticket', ticket, '--subject', subject, '--round', String(round), '--prompt-file', promptFile, '--lead', lead];
+    if (project) args.push('--project', project);
     if (c) args.push('--critic', c);
     if (readDir) args.push('--read-dir', readDir);
     if (timeout) args.push('--timeout', String(timeout));
@@ -280,6 +281,32 @@ test('the default comes from config and --critic overrides it', { skip: fakesSki
   assert.equal(r2.json.critic, 'claude');
   assert.equal(r2.json.mode, 'named');
   assert.match(b.reviews().at(-1).prompt, /^Reviewer: Claude Code$/m);
+});
+
+test('two projects with different critic defaults: --project picks each one, context shows it, and --critic still wins', { skip: fakesSkip }, (t) => {
+  const b = box();
+  after(t, b);
+  const base = acmeConfig(join(b.s.root, 'src'), join(b.s.root, 'tickets'));
+  const shop = base.projects['acme-shop'];
+  b.s.config({ ...base, critic: { default: 'other' }, projects: { 'acme-shop': { ...shop, critic: { default: 'same' } }, 'acme-web': { ...shop, tickets: join(b.s.root, 'web-tickets') } } });
+  const shopCtx = b.s.run(['context', 'acme-shop']).json;
+  assert.deepEqual(shopCtx.project.critic, { default: 'same', from: 'project' });
+  assert.deepEqual(b.s.run(['context', 'acme-web']).json.project.critic, { default: 'other', from: 'config' });
+  assert.equal(shopCtx.critic.default, 'other');
+  let r = b.call({ lead: 'claude', project: 'acme-shop', ticket: 'ACME-1' });
+  assert.equal(r.status, 0, r.stdout);
+  assert.deepEqual([r.json.critic, r.json.mode], ['claude', 'same']);
+  r = b.call({ lead: 'claude', project: 'acme-web', ticket: 'ACME-2' });
+  assert.deepEqual([r.json.critic, r.json.mode], ['codex', 'other']);
+  // The brief's approved Critic: line comes in as --critic and wins over the project.
+  r = b.call({ lead: 'claude', project: 'acme-shop', critic: 'other', ticket: 'ACME-3' });
+  assert.deepEqual([r.json.critic, r.json.mode], ['codex', 'other']);
+  assert.equal(b.call({ lead: 'claude', project: 'acme-nope', ticket: 'ACME-4' }).status, 2);
+  // A project critic outside the four choices does not validate.
+  b.s.config({ ...base, projects: { 'acme-shop': { ...shop, critic: { default: 'cousin' } } } });
+  r = b.s.run(['context', 'acme-shop']);
+  assert.equal(r.json.failure, 'config');
+  assert.match(r.json.detail, /projects\.acme-shop\.critic\.default: one of other, same, claude, codex/);
 });
 
 test('other with one client fails critic-unavailable and never runs the lead', { skip: fakesSkip }, (t) => {

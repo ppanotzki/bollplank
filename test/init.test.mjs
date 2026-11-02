@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { sandbox, fakesSkip, gitRepo, kit } from './helpers.mjs';
 import * as claude from '../lib/providers/claude.mjs';
 import * as codex from '../lib/providers/codex.mjs';
-import { isReadTool, judge, jsonIn, LINEAR_MCP_URL, LINEAR_PROBE_PROMPT, readOnlyLinearTools } from '../lib/setup/probe.mjs';
+import { CODEX_LINEAR_READ_TOOLS, isLinearRead, isReadTool, judge, jsonIn, LINEAR_MCP_URL, LINEAR_PROBE_PROMPT, readOnlyLinearTools, serverPart } from '../lib/setup/probe.mjs';
 import { githubSlug } from '../lib/commands/init.mjs';
 
 // What a Linear tool returns for the synthetic workspace. FAKE_STATUSES replaces the status list.
@@ -28,7 +28,7 @@ const state = process.env.FAKE_STATE;
 const log = (x) => fs.appendFileSync(path.join(state, 'calls.jsonl'), JSON.stringify({ tool: 'claude', args, ...x }) + '\\n');
 log({});
 const added = fs.existsSync(path.join(state, 'claude-linear-added'));
-const linear = added ? 'added' : process.env.FAKE_LINEAR || 'none';
+const linear = added ? 'added' : process.env.FAKE_LINEAR_CLAUDE || process.env.FAKE_LINEAR || 'none';
 ${TEAMS}
 if (args[0] === '--version') { console.log('2.1.312 (Claude Code)'); process.exit(0); }
 if (args[0] === 'auth') {
@@ -86,7 +86,11 @@ const state = process.env.FAKE_STATE;
 const log = (x) => fs.appendFileSync(path.join(state, 'calls.jsonl'), JSON.stringify({ tool: 'codex', args, ...x }) + '\\n');
 log({});
 const added = fs.existsSync(path.join(state, 'codex-linear-added'));
-const linear = added ? 'added' : process.env.FAKE_LINEAR || 'none';
+const linear = added ? 'added' : process.env.FAKE_LINEAR_CODEX || process.env.FAKE_LINEAR || 'none';
+// A configured server named linear, unless Linear is missing or reaches Codex only as a connector.
+const servers = [...(['none', 'connector'].includes(linear) ? [] : ['linear']), 'acme_files'];
+const off = (n) => args.includes('mcp_servers.' + n + '.enabled=false');
+const allowed = (n) => { const a = args.find((x) => x.startsWith('mcp_servers.' + n + '.enabled_tools=')); return a ? JSON.parse(a.slice(a.indexOf('=') + 1)) : null; };
 ${TEAMS}
 if (args[0] === '--version') { console.log('codex-cli 0.166.0-alpha.5.1'); process.exit(0); }
 if (args[0] === 'login' && args[1] === 'status') {
@@ -95,7 +99,14 @@ if (args[0] === 'login' && args[1] === 'status') {
   process.exit(auth === 'out' ? 1 : 0);
 }
 if (args[0] === 'mcp') {
-  if (args[1] === 'get') process.exit(added ? 0 : 1);
+  // The critic and the probe list the configured servers to switch them off, and read back the
+  // tools a kept server offers.
+  if (args[1] === 'list') { console.log(JSON.stringify(servers.map((name) => ({ name, enabled: !off(name) })))); process.exit(0); }
+  if (args[1] === 'get') {
+    if (!servers.includes(args[2])) process.exit(1);
+    console.log(JSON.stringify({ name: args[2], enabled: !off(args[2]), enabled_tools: allowed(args[2]), disabled_tools: null }));
+    process.exit(0);
+  }
   if (args[1] === 'add') { fs.writeFileSync(path.join(state, 'codex-linear-added'), ''); process.exit(0); }
   if (args[1] === 'login') process.exit(0);
   process.exit(2);
@@ -114,11 +125,16 @@ process.stdin.on('end', () => {
     emit({ type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } });
     return;
   }
-  if (linear === 'real' || linear === 'added' || linear === 'error') {
-    const failed = linear === 'error';
-    const server = linear === 'added' ? 'linear' : 'codex_apps';
-    emit({ type: 'item.started', item: { id: 'item_1', type: 'mcp_tool_call', server, tool: 'linear_list_teams', arguments: {}, status: 'in_progress' } });
-    emit({ type: 'item.completed', item: { id: 'item_1', type: 'mcp_tool_call', server, tool: 'linear_list_teams', arguments: {}, result: failed ? null : { content: [{ type: 'text', text: TEAMS_TEXT }] }, error: failed ? { message: 'Linear answered 401' } : null, status: failed ? 'failed' : 'completed' } });
+  // The connector answers only while apps are on. The server offers a tool only when it is allowed.
+  const connector = linear === 'connector' && !args.includes('apps');
+  if (['real', 'added', 'error', 'slack'].includes(linear) || connector) {
+    const server = connector ? 'codex_apps' : 'linear';
+    const tool = connector ? 'linear_list_teams' : 'list_teams';
+    const offered = connector || (!off('linear') && (allowed('linear') ?? [tool]).includes(tool));
+    const failed = linear === 'error' || !offered;
+    emit({ type: 'item.started', item: { id: 'item_1', type: 'mcp_tool_call', server, tool, arguments: {}, status: 'in_progress' } });
+    emit({ type: 'item.completed', item: { id: 'item_1', type: 'mcp_tool_call', server, tool, arguments: {}, result: failed ? null : { content: [{ type: 'text', text: TEAMS_TEXT }] }, error: failed ? { message: offered ? 'Linear answered 401' : 'unknown tool' } : null, status: failed ? 'failed' : 'completed' } });
+    if (linear === 'slack') emit({ type: 'item.completed', item: { id: 'item_3', type: 'mcp_tool_call', server: 'acme_slack', tool: 'send_message', arguments: {}, result: { content: [] }, status: 'completed' } });
   }
   emit({ type: 'item.completed', item: { id: 'item_2', type: 'agent_message', text: linear === 'none' ? '{"error":"no Linear tool"}' : REPLY } });
   emit({ type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } });
@@ -218,7 +234,26 @@ test('the probe allows only Linear tools that list, get, search or read, and fai
   assert.equal(judge('Acme client', [read], reply).ok, true);
   const wrote = judge('Acme client', [read, { name: 'mcp__linear__save_issue', ok: true, text: '{}' }], reply);
   assert.equal(wrote.ok, false);
-  assert.match(wrote.detail, /called mcp__linear__save_issue, which may change Linear\. The probe allows only tools that list, get, search or read\./);
+  assert.match(wrote.detail, /called mcp__linear__save_issue, which is not a Linear read\. The probe allows only Linear tools that list, get, search or read\./);
+});
+
+test('the probe fails on any call that is not a Linear read, whatever its service', () => {
+  const reply = JSON.stringify({ teams: [{ key: 'ACME', name: 'Acme' }] });
+  const read = { name: 'mcp__linear__list_teams', ok: true, text: '{"teams":[{"key":"ACME","name":"Acme"}]}' };
+  // A valid Linear read and a Slack write in one transcript fail, for both clients' names.
+  for (const slack of ['mcp__acme_slack__send_message', 'acme_slack/send_message']) {
+    const r = judge('Acme client', [read, { name: slack, ok: true, text: '{}' }], reply);
+    assert.equal(r.ok, false);
+    assert.deepEqual(r.tools, [slack]);
+    assert.match(r.detail, /not a Linear read/);
+  }
+  // A read verb on a server that is not Linear, a built in tool and a Codex shell command fail too.
+  for (const name of ['mcp__acme_files__read_file', 'mcp__acme_slack__linear_list', 'Bash', 'command_execution']) assert.equal(judge('Acme client', [read, { name, ok: true, text: '' }], reply).ok, false, name);
+  assert.equal(serverPart('mcp__claude_ai_Linear__list_teams'), 'claude_ai_Linear');
+  assert.equal(serverPart('linear/list_teams'), 'linear');
+  assert.equal(isLinearRead('linear/list_teams'), true);
+  assert.equal(isLinearRead('acme_slack/linear_list'), false);
+  assert.ok(CODEX_LINEAR_READ_TOOLS.every((t) => isReadTool(t)));
 });
 
 test('the Claude probe passes on a real tool call through a connector and fails on a claimed one', { skip: fakesSkip }, (t) => {
@@ -235,6 +270,11 @@ test('the Claude probe passes on a real tool call through a connector and fails 
   assert.equal(probe.args[probe.args.indexOf('--allowedTools') + 1], 'mcp__claude_ai_Linear__list*,mcp__claude_ai_Linear__linear_list*,mcp__claude_ai_Linear__get*,mcp__claude_ai_Linear__linear_get*,mcp__claude_ai_Linear__search*,mcp__claude_ai_Linear__linear_search*,mcp__claude_ai_Linear__read*,mcp__claude_ai_Linear__linear_read*');
   assert.equal(probe.args[probe.args.indexOf('--tools') + 1], '');
   assert.ok(probe.args.includes('--no-session-persistence'));
+  // Nothing outside the allowed reads can run: no prompt is answered, dontAsk denies the rest, and
+  // no user or project setting can allow another tool.
+  assert.equal(probe.args[probe.args.indexOf('--permission-mode') + 1], 'dontAsk');
+  assert.equal(probe.args[probe.args.indexOf('--permission-prompts') + 1], 'none');
+  assert.equal(probe.args[probe.args.indexOf('--setting-sources') + 1], 'local');
   assert.match(probe.prompt, /Bollplank setup check/);
   const claimed = claude.probeLinear({ bin, env: env('claimed'), cwd });
   assert.equal(claimed.ok, false);
@@ -253,18 +293,45 @@ test('the Codex probe passes on a real MCP tool call event and fails on a claime
   const real = codex.probeLinear({ bin, env: env('real'), cwd });
   assert.equal(real.ok, true, real.detail);
   assert.deepEqual(real.teams.map((x) => x.key), ['ACME']);
+  assert.deepEqual(real.tools, ['linear/list_teams']);
   const probe = b.calls().find((c) => c.args[0] === 'exec');
   for (const flag of ['--json', '--ephemeral', '--skip-git-repo-check']) assert.ok(probe.args.includes(flag), flag);
   assert.equal(probe.args[probe.args.indexOf('--sandbox') + 1], 'read-only');
   assert.ok(probe.args.includes('forced_login_method="chatgpt"'));
+  // The critic's isolation: connectors and the other tool features off, every other MCP server
+  // off, and the Linear server offering only its read tools, confirmed before the turn starts.
+  for (const feature of ['apps', 'plugins', 'multi_agent', 'hooks']) assert.ok(probe.args.some((a, i) => a === feature && probe.args[i - 1] === '--disable'), feature);
+  assert.ok(probe.args.includes('mcp_servers.acme_files.enabled=false'));
+  assert.ok(!probe.args.includes('mcp_servers.linear.enabled=false'));
+  assert.ok(probe.args.includes(`mcp_servers.linear.enabled_tools=${JSON.stringify(CODEX_LINEAR_READ_TOOLS)}`));
+  const before = b.calls().filter((c) => c.tool === 'codex' && c.args[0] === 'mcp').map((c) => c.args.slice(0, 3).join(' '));
+  assert.deepEqual(before, ['mcp list --json', 'mcp list --json', 'mcp get linear']);
   assert.equal(codex.probeLinear({ bin, env: env('claimed'), cwd }).ok, false);
   const failed = codex.probeLinear({ bin, env: env('error'), cwd });
   assert.equal(failed.ok, false);
   assert.match(failed.detail, /401/);
+  // A Slack write next to a good Linear read fails the probe.
+  const slack = codex.probeLinear({ bin, env: env('slack'), cwd });
+  assert.equal(slack.ok, false);
+  assert.match(slack.detail, /called acme_slack\/send_message, which is not a Linear read/);
+});
+
+test('the Codex probe never reads Linear through a ChatGPT connector and asks for the Linear MCP server', { skip: fakesSkip }, (t) => {
+  const b = box(t, { clients: ['codex'] });
+  const bin = join(b.s.fakes, 'codex');
+  const cwd = join(b.s.root, 'neutral');
+  for (const linear of ['connector', 'none']) {
+    const r = codex.probeLinear({ bin, env: { ...b.s.env, ...b.env, FAKE_LINEAR: linear }, cwd });
+    assert.equal(r.ok, false);
+    assert.equal(r.needsServer, true);
+    assert.match(r.detail, /Codex has no Linear MCP server switched on\. Linear through a ChatGPT connector cannot be narrowed to read tools/);
+  }
+  // No model turn ran.
+  assert.equal(b.calls().some((c) => c.tool === 'codex' && c.args[0] === 'exec'), false);
 });
 
 test('addLinearMcp runs the documented add and login commands for each client', { skip: fakesSkip }, (t) => {
-  const b = box(t);
+  const b = box(t, { linear: 'none' });
   const env = { ...b.s.env, ...b.env };
   const c = claude.addLinearMcp({ bin: join(b.s.fakes, 'claude'), env, url: LINEAR_MCP_URL, stdio: 'ignore' });
   const x = codex.addLinearMcp({ bin: join(b.s.fakes, 'codex'), env, url: LINEAR_MCP_URL, stdio: 'ignore' });
@@ -440,7 +507,8 @@ test('a missing status is never created: init shows the steps and checks again o
   assert.match(text(r), /"Acceptance" is not a status of ACME in Linear\. Bollplank never creates one on its own/);
   assert.match(text(r), /Settings, then Teams, then ACME, then Workflow\. Under Started, add a status named "Acceptance"/);
   assert.match(text(r), /Still no status named "Acceptance"/);
-  assert.match(text(r), /Kept "Acceptance"/);
+  assert.match(text(r), /Kept "Acceptance"\. `bollplank doctor` fails until a status named "Acceptance" exists in ACME/);
+  assert.equal(r.json.doctor.checks.find((c) => c.id === 'board.status.ACME.acceptance').ok, false);
   const probes = b.calls().filter((c) => c.args[0] === '-p' && c.prompt).length;
   assert.ok(probes >= 2, `probes ${probes}`);
   assert.equal(b.config().board.statuses.acceptance, 'Acceptance');

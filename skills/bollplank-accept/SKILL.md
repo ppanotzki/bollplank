@@ -9,7 +9,7 @@ Only the approver accepts, in so many words ("accept", "accepted"). Take their n
 
 ## Steps
 
-1. **Check.** Run `bollplank ledger mark <TICKET>` first, then `bollplank context <project>`. The issue is in the acceptance status, and `bollplank run show <project> <TICKET>` agrees: for a repository run every recorded deploy has status `succeeded`, for a consulting or configuration run the record is complete. Otherwise say what is missing.
+1. **Check.** Run `bollplank ledger mark <TICKET>` first, then `bollplank context <project>`. The issue is in the acceptance status, and the run record agrees: for a repository run `bollplank run check-shipped <project> <TICKET>` exits 0, so every repo the ticket changes is merged and deployed with status `succeeded`, and for a consulting or configuration run `bollplank run show <project> <TICKET>` shows the record complete. Otherwise say what is missing.
    Read the project's AGENTS.md from the latest base branch of the repo that holds it: `git -C <repo> fetch`, then `git -C <repo> show origin/<base branch>:AGENTS.md`. Never from a working tree, which can be behind and miss a line such as a further release note destination.
 2. **Release note.** Make sure the run's "Release note" comment exists. Write it now if the run did not. Then add it to the project's "Release notes" document on the board (see bollplank-board), unless the project's AGENTS.md says release notes stay on the ticket:
    - a new section at the top, headed `## ACME-1 · <ticket title>`

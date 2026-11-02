@@ -27,7 +27,7 @@ Raised by: ACME-x
 
 **Cross-model review** is your recommendation, and the approver settles it when they approve. Recommend `plan`, `code` or `both` only when the work is complex or risky enough: several repos, shipping or data migration, permissions, concurrency, anything hard to undo. Otherwise `none`. A selected stage is a gate in the run. It must complete before implementation (plan) or before merging (code). Keep this line's format exactly as shown.
 
-**Critic** is optional and sits on its own line under Cross-model review. It names who reviews this ticket: `other` is the model not leading, `same` is a separate session of the leading model, `claude` and `codex` name one. Leave the line out to use the config's `critic.default`. Once approved, the line wins for the ticket.
+**Critic** is optional and sits on its own line under Cross-model review. It names who reviews this ticket: `other` is the model not leading, `same` is a separate session of the leading model, `claude` and `codex` name one. Leave the line out to use the project's critic default, `project.critic.default` from `bollplank context <project>`. Once approved, the line wins for the ticket.
 
 **Raised by** names the ticket whose work gave rise to this one. Leave the line out when there is none. The ledger's Raised list reads only this line.
 

@@ -14,7 +14,7 @@ For a configuration run, identify a plan by its immutable snapshot path and sha2
 1. **Find the subject.** Run `bollplank ledger mark <TICKET>` first, then `bollplank context <project>`. The ticket comes from the approver's words or the session. The subject is the current brief version ("brief v3"), unless the approver or the run names the plan or a diff. Its series is `brief`, `plan` or `code`.
 2. **Choose the critic.**
    - An approved brief with a `Critic:` line fixes the critic for the ticket. Refuse to run any other, and say that a different critic needs a revised brief approved again.
-   - Before approval, use the brief's proposed `Critic:` line. With no line, use `critic.default` from context.
+   - Before approval, use the brief's proposed `Critic:` line. With no line, the default applies: `project.critic.default` from `bollplank context <project>`, which is the project's own setting over the top level one.
    - `--lead` is this session's own tool, `claude` or `codex`.
 3. **Read the board** (see bollplank-board): the issue and every comment. The round is counted per series and per critic from the critiques on the board, which carry a `Round:` line: round 1 when this critic has not reviewed this series yet, otherwise one more than its last round on it. A revised subject continues its series.
 4. **Build the prompt** from `<kit>/prompts/critic.md`, with `kit` from context. Use `critic-same.md` next to it whenever the critic is the lead's own provider: `same`, or a named provider equal to the lead. The wrapper labels and stores those reviews as same provider. Fill:
@@ -27,8 +27,9 @@ For a configuration run, identify a plan by its immutable snapshot path and sha2
    Leave `{REVIEWER}`, `{MODEL}` and `{WORKFLOW}` as they are. The wrapper fills them, and it writes the Reviewer, Model and Workflow lines of the returned critique itself. Write the prompt to a file in your scratch space.
 5. **Call the critic:**
    ```
-   bollplank critic --ticket <TICKET> --subject brief|plan|code --round <n> --prompt-file <file> --critic <choice> --lead claude|codex [--read-dir <folder>]
+   bollplank critic --ticket <TICKET> --subject brief|plan|code --round <n> --prompt-file <file> --project <project> [--critic <Critic: line>] --lead claude|codex [--read-dir <folder>]
    ```
+   Always pass `--project`, so the wrapper resolves the project's default. Pass `--critic` when the brief has a `Critic:` line. It wins over the project's default.
    For a plan or code review, add `--read-dir` with the narrowest source folder the review needs. Put shared instructions that live elsewhere into `{BODY}`. Never ask the critic to read a local file that was not made available.
 
    In a sandboxed Codex shell, request the supported approved execution outside the sandbox for this subscription CLI call at the first invocation. Keep the configured approval reviewer and never use permission bypass flags. If that request is denied, report it before changing anything. A sandboxed "Not logged in" does not prove the normal sign in is missing.

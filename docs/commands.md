@@ -44,7 +44,7 @@ Prints the Workflow line every brief and comment carries, for example `Bollplank
 
 Prints what a skill needs: `workflow`, `kit` (the kit folder), `approver`, `copyStyle`, `board` with its statuses, `critic`, `projects` (the project names) and `boards`. `boards` maps each project name to its board `team` and `project`, taken from the project's `board`, else from the top level `board.team` and `board.project`, else `null`. A skill uses it to find which project an issue belongs to, so it is there with or without a project.
 
-With a project it adds `project`: `name`, `mode`, `runs`, `stopList`, `board` (the project's own `board` entry, without the top level defaults), `repos`, `shipOrder`, `privateScan`, `source` and `tickets`.
+With a project it adds `project`: `name`, `mode`, `runs`, `stopList`, `board` (the project's own `board` entry, without the top level defaults), `repos`, `shipOrder`, `privateScan`, `critic`, `source` and `tickets`. `project.critic` is the critic default that applies to the project: `{ "default": ..., "from": "project" }` when the project sets its own `critic.default`, else the top level one with `"from": "config"`.
 
 ## The critic
 
@@ -52,14 +52,15 @@ With a project it adds `project`: `name`, `mode`, `runs`, `stopList`, `board` (t
 
 ```
 bollplank critic --ticket <TICKET> --subject brief|plan|code --round <n> --prompt-file <file> --lead claude|codex
-  [--critic other|same|claude|codex] [--read-dir <folder>] [--timeout <seconds>] [--model <m>] [--effort <e>] [--new-session]
+  [--project <name>] [--critic other|same|claude|codex] [--read-dir <folder>] [--timeout <seconds>] [--model <m>] [--effort <e>] [--new-session]
 ```
 
 Runs one critique round and returns the critique text. The lead posts it.
 
 - `--prompt-file` is the prompt the lead filled from [prompts/critic.md](../prompts/critic.md) or [prompts/critic-same.md](../prompts/critic-same.md). The lead fills `{TICKET}`, `{ROUND}`, `{SUBJECT}`, `{SUBJECT_SHORT}`, `{DATE}`, `{ROUND_NOTE}` and `{BODY}`. The command fills `{REVIEWER}`, `{MODEL}` and `{WORKFLOW}`. `{ROUND_NOTE}` is "Review the whole subject." in round 1. In later rounds it asks the critic to review what changed since its last round plus anything it missed, with its earlier rounds and the responses in `{BODY}`.
 - `--lead` is the client running the session that calls the critic.
-- `--critic` overrides `critic.default` for this call. `other` is the provider that is not `--lead`.
+- `--project` takes the default from that project's `critic.default`, else from the top level `critic.default`. An unknown project is a usage error.
+- `--critic` overrides both defaults for this call. The critique skill passes the brief's approved `Critic:` line here, so it wins over the project. `other` is the provider that is not `--lead`.
 - `--read-dir` opens one source folder to the critic for reading. Without it, the critic runs in the empty `~/.bollplank/neutral` folder.
 - `--timeout` defaults to 600 seconds and must be above 0.
 - `--model` and `--effort` override the config for this call.
@@ -118,22 +119,25 @@ The run record, `.run.json` in the ticket folder. For repository projects:
 
 ```
 bollplank run init <project> <TICKET> --review none|plan|code|both [--critic other|same|claude|codex]
-bollplank run stage <project> <TICKET> plan|code --revision <sha or version> --verdict Approve|Revise [--points <n>] [--complete]
+bollplank run stage <project> <TICKET> plan --revision <sha or version> --verdict Approve|Revise [--points <n>] [--complete]
+bollplank run stage <project> <TICKET> code --revision <sha> | --revisions <repo>=<sha>,<repo>=<sha> --verdict Approve|Revise [--points <n>] [--complete]
 bollplank run reopen <project> <TICKET> plan|code --reason <text>
 bollplank run gate <project> <TICKET> plan|code
 bollplank run plan <project> <TICKET> --commit <sha> [--path <file>]
 bollplank run deploy <project> <TICKET> <repo> --kind <kind> --status <status> [--ref <ref>] [--commit <sha>]
 bollplank run log <project> <TICKET> --event <text>
 bollplank run show <project> <TICKET>
+bollplank run check-shipped <project> <TICKET>
 ```
 
 - **init** refuses with `runs-disabled` unless the project has `"runs": true`, and with `no-ticket-folder` before `bollplank ticket create`. `--review` comes from the brief's Cross-model review line, and `--critic` from its `Critic:` line when it has one. On an existing record it returns it for a resume.
-- **stage** records a review round. The stage is complete when the verdict is `Approve`, or with `--complete` after every material point was sorted and the critic confirmed.
+- **stage** records a review round. The stage is complete when the verdict is `Approve`, or with `--complete` after every material point was sorted and the critic confirmed. A code round names the reviewed head of each repo the ticket changes, with `--revisions acme-api=<sha>,acme-web=<sha>`, and the round keeps them as `revisions`. `--revision` alone is enough when the ticket folder changes one repo, and is refused when it changes more. A pair that names a repo the ticket does not change, a repo twice, or both options at once is a usage error.
 - **gate** exits 0 when the stage is not selected or is complete, and fails with `stage-incomplete` otherwise.
 - **reopen** marks a stage incomplete after a change to covered behaviour, or after `bollplank merge` refused with `review-stale`.
+- **check-shipped** exits 0 only when every repo the ticket folder's `.ticket.json` changes is merged, as `bollplank merge --run` recorded it, and the latest deploy recorded for that repo's merge commit has status `succeeded`. A deploy recorded for another commit does not count. The result has `shipped` and, per repo in ship order, `merged`, `mergeCommit`, `pr`, `deployed` and `deploy`. Otherwise it fails with `not-shipped`, and the detail names each repo that is not merged or not deployed. The run and accept skills check it before the issue moves to acceptance or Done.
 - **deploy** records a deploy. `--kind` is one of `none`, `command`, `amplify`, `github-actions`, `merge` and `release`, and `--status` one of `succeeded`, `failed`, `timeout` and `running`. The first four kinds and the first three statuses are what `deploy-wait` reports, so its `kind`, `status` and `ref` go straight in. `merge` and `release` record a step that is not a `deploy-wait` kind. A second entry with the same repo, kind and ref replaces the first.
 
-Failures: `usage`, `runs-disabled`, `no-ticket-folder`, `no-run`, `not-selected`, `stage-incomplete` and `corrupt` (a run record that is not valid JSON or not an object).
+Failures: `usage`, `runs-disabled`, `no-ticket-folder`, `no-run`, `not-selected`, `stage-incomplete`, `not-shipped` and `corrupt` (a run record or ticket folder record that is not valid JSON or not an object).
 
 Consulting and configuration projects use the same command with an evidence journal:
 
@@ -179,8 +183,8 @@ bollplank merge <project> <repo> <pr> [--run <ticket folder>]
 
 Squash merges a PR only when it is open, not a draft, targets the repo's base branch, and every check in the repo's `checks` is present, finished and green on its head commit. The expected checks come from the config, never from the PR. The merge is made with `--match-head-commit`, so GitHub refuses it when the branch moved after the checks ran.
 
-- **With `--run`,** the run record and the ticket folder must be for this merge: the record's project is this project, the folder's `.ticket.json` exists and names the same project and ticket, and the repo is one the ticket changes. Otherwise the merge refuses with `run-mismatch`. A selected plan or code stage must be complete. The PR, final head and merge commit are written back to the record. `bollplank ticket remove` needs that record to recognise a squash merged branch.
-- **With a selected code stage,** the PR head must carry the change the last approved code round reviewed. The PR head is fetched into the source checkout, and for both commits the change from where it left `origin/<base>` is compared by `git patch-id --stable`, never by commit. A clean rebase keeps the patch id, so it keeps the approval. A changed change refuses with `review-stale`. Then run `bollplank run reopen <project> <TICKET> code --reason "..."`, review the PR head and record the new round. An approved revision that is not a commit in the source checkout is `review-stale` too.
+- **With `--run`,** the run record and the ticket folder must be for this merge: the record's project is this project, the folder's `.ticket.json` exists and names the same project and ticket, and the repo is one the ticket changes. The PR must be the ticket's own: its head branch (`headRefName`) is the ticket branch in `.ticket.json`, and once the run record has a PR for the repo, it is that PR. This holds whether or not a review stage is selected. Otherwise the merge refuses with `run-mismatch`. A selected plan or code stage must be complete. The PR, final head and merge commit are written back to the record. `bollplank ticket remove` needs that record to recognise a squash merged branch.
+- **With a selected code stage,** the PR head must carry the change the last approved code round reviewed for this repo, its entry in the round's `revisions`. A round with one plain `revision` counts only for a ticket that changes one repo. A round with no entry for the repo refuses with `review-stale`. The PR head is fetched into the source checkout, and for both commits the change from where it left `origin/<base>` is compared by `git patch-id --verbatim`, never by commit. The verbatim patch id keeps whitespace, so an indentation change, such as a Python line moved into or out of a block, needs a new review. It ignores line numbers, so a clean rebase keeps the patch id and the approval. A changed change refuses with `review-stale`. Then run `bollplank run reopen <project> <TICKET> code --reason "..."`, review the PR head and record the new round. An approved revision that is not a commit in the source checkout is `review-stale` too, and so is every review check when the git in use has no `patch-id --verbatim` (git 2.40 and later have it).
 - **For a project with `privateScan`,** the PR head and its whole history must pass the private name scan with the local list, and so must the PR's title and body. The squash commit then gets that scanned title, with ` (#<pr>)`, as its subject and the scanned body as its body, so GitHub never writes unscanned text into history. A scan that is skipped because no list is present refuses the merge.
 
 A success has `merged`, `repo`, `pr`, `base`, `finalHead`, `mergeCommit` and `checks`. It adds `review` (`approved`, `approvedPatchId`, `headPatchId`) with a code stage, and the `privateScan` and `messageScan` outcomes for a `privateScan` project. Every failure has `merged: false`, `repo` and `pr`.
@@ -190,10 +194,10 @@ A success has `merged`, `repo`, `pr`, `base`, `finalHead`, `mergeCommit` and `ch
 | `not-open`, `draft`, `wrong-base` | The PR is closed or merged, a draft, or targets another branch. |
 | `checks` | An expected check is missing, not finished or failed. `checks` lists each one. |
 | `no-run` | `--run` names a folder without `.run.json`. |
-| `run-mismatch` | The run record or ticket folder is for another project, ticket or repo. |
+| `run-mismatch` | The run record or ticket folder is for another project, ticket or repo, or the PR is not the ticket's: its head branch is not the ticket branch, or the record has another PR for the repo. |
 | `stage-incomplete` | A selected plan or code stage is not complete. |
 | `no-checkout` | The code review check needs the source checkout, or could not fetch the PR head into it. |
-| `review-stale` | The PR head is not the change the last approved code round reviewed. |
+| `review-stale` | The PR head is not the change the last approved code round reviewed for this repo, the round names no head for the repo, or git cannot compare them verbatim. |
 | `private-scan` | The scan of the PR head, or of its title and body, failed or was skipped. It names patterns by number and never prints a name. |
 | `corrupt` | The run record or ticket folder record is not valid JSON or not an object. |
 | `not-merged`, `gh-failed` | GitHub did not complete the merge, or a `gh` call failed. |
