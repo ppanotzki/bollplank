@@ -454,3 +454,16 @@ test('a corrupt install record fails the links check with the file named, never 
   assert.equal(init.json.failure, 'corrupt');
   assert.equal(readFileSync(join(b.s.bollplank, 'install.json'), 'utf8'), '{"links": [');
 });
+
+test('a client found only in its app bundle warns with the PATH line', async () => {
+  const { clientPathCheck } = await import('../lib/commands/doctor.mjs');
+  const c = { name: 'codex', label: 'Codex', bin: '/Applications/Acme.app/Contents/Resources/codex-cli/bin/codex' };
+  const off = clientPathCheck(c, null, '/bin/zsh');
+  assert.equal(off.ok, false);
+  assert.equal(off.required, false);
+  assert.match(off.detail, /`codex` is not on PATH/);
+  assert.match(off.fix, /~\/\.zshrc.*export PATH="\/Applications\/Acme\.app\/Contents\/Resources\/codex-cli\/bin:\$PATH"/);
+  const on = clientPathCheck(c, '/usr/local/bin/codex');
+  assert.equal(on.ok, true);
+  assert.equal(on.fix, null);
+});
