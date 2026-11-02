@@ -2,7 +2,7 @@
 // holds nothing else. No test runs a real client, reads a real sign in or makes a model call.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { sandbox, acmeConfig, fakesSkip } from './helpers.mjs';
 import * as claude from '../lib/providers/claude.mjs';
@@ -11,11 +11,14 @@ import { get, other, childEnv, providers } from '../lib/providers/index.mjs';
 
 const CRITIQUE = 'Critique of ACME-1 brief v1\\nReviewer: fake\\nModel: fake\\nVerdict: Approve\\n\\nNo material points.';
 
+// Both fakes reply with FAKE_TEXT when it is set, else with CRITIQUE. FAKE_MODE picks a failure or
+// a tool the critic must not use.
 const FAKE_CLAUDE = `
 const fs = require('node:fs');
+const path = require('node:path');
 const args = process.argv.slice(2);
 const mode = process.env.FAKE_MODE || 'ok';
-const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(ANTHROPIC_|OPENAI_|CODEX_|CLAUDE_|AWS_|AZURE_|ACME_)/.test(k)));
+const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(ANTHROPIC_|OPENAI_|CODEX_|CLAUDE|AWS_|AZURE_|ACME_|ENABLE_)/i.test(k)));
 const record = (extra) => fs.appendFileSync(process.env.FAKE_CAPTURE, JSON.stringify({ tool: 'claude', args, cwd: process.cwd(), env, ...extra }) + '\\n');
 if (args[0] === '--version') { record({}); console.log('2.1.312 (Claude Code)'); process.exit(0); }
 if (args[0] === 'auth') {
@@ -32,7 +35,13 @@ const at = (f) => { const i = args.indexOf(f); return i >= 0 ? args[i + 1] : und
 const session = at('--resume') ?? at('--session-id');
 const model = at('--model') ?? 'claude-acme-default';
 const emit = (e) => process.stdout.write(JSON.stringify(e) + '\\n');
-emit({ type: 'system', subtype: 'init', session_id: session, claude_code_version: 'fake' });
+if (mode === 'resume-missing' && at('--resume')) { record({ prompt: '' }); process.stderr.write('No conversation found with session ID: ' + session + '\\n'); process.exit(1); }
+const tools = (at('--tools') ?? '').split(',').filter(Boolean);
+if (mode === 'init-tools') tools.push('Bash', 'mcp__acme__search');
+emit({ type: 'system', subtype: 'init', session_id: session, claude_code_version: 'fake', tools, mcp_servers: mode === 'init-mcp' ? [{ name: 'acme', status: 'connected' }] : [] });
+const dir = path.join(process.env.CLAUDE_CONFIG_DIR, 'projects', 'acme-neutral');
+fs.mkdirSync(dir, { recursive: true });
+fs.appendFileSync(path.join(dir, session + '.jsonl'), '{}\\n');
 const rl = require('node:readline').createInterface({ input: process.stdin });
 rl.on('line', (line) => {
   const prompt = JSON.parse(line).message.content;
@@ -40,18 +49,21 @@ rl.on('line', (line) => {
   if (mode === 'timeout') return;
   if (mode === 'client-error') return emit({ type: 'result', subtype: 'error', is_error: true, result: 'synthetic usage limit reached', session_id: session });
   if (mode === 'no-result') { process.stderr.write('synthetic crash\\n'); process.exit(4); }
-  const text = mode === 'malformed' ? 'Here is my review.\\nVerdict: Approve' : mode === 'empty' ? '' : '${CRITIQUE}';
-  emit({ type: 'result', subtype: 'success', is_error: false, result: text, session_id: session, modelUsage: { [model + '-20261101']: {} }, usage: { input_tokens: 12, output_tokens: 34 } });
+  if (mode === 'tool-use') emit({ type: 'assistant', session_id: session, message: { content: [{ type: 'tool_use', id: 'toolu_1', name: 'mcp__acme__search', input: {} }] } });
+  const text = process.env.FAKE_TEXT ?? (mode === 'malformed' ? 'Here is my review.\\nVerdict: Approve' : mode === 'empty' ? '' : '${CRITIQUE}');
+  emit({ type: 'result', subtype: 'success', is_error: false, result: text, session_id: session, modelUsage: mode === 'no-model' ? {} : { [model + '-20261101']: {} }, usage: { input_tokens: 12, output_tokens: 34 } });
   if (mode === 'exit-after-review') process.exitCode = 9;
 });
 `;
 
+// The fake Codex lists the servers in FAKE_CODEX_MCP (default acme_files) for `mcp list --json` and
+// honours -c mcp_servers.<name>.enabled=false, unless FAKE_MODE is mcp-stays-on or mcp-fails.
 const FAKE_CODEX = `
 const fs = require('node:fs');
 const path = require('node:path');
 const args = process.argv.slice(2);
 const mode = process.env.FAKE_MODE || 'ok';
-const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(ANTHROPIC_|OPENAI_|CODEX_|CLAUDE_|AWS_|AZURE_|ACME_)/.test(k)));
+const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(ANTHROPIC_|OPENAI_|CODEX_|CLAUDE|AWS_|AZURE_|ACME_|ENABLE_)/i.test(k)));
 const record = (extra) => fs.appendFileSync(process.env.FAKE_CAPTURE, JSON.stringify({ tool: 'codex', args, cwd: process.cwd(), env, ...extra }) + '\\n');
 if (args[0] === '--version') { record({}); console.log('codex-cli 0.166.0-alpha.5.1'); process.exit(0); }
 if (args[0] === 'login' && args[1] === 'status') {
@@ -62,6 +74,13 @@ if (args[0] === 'login' && args[1] === 'status') {
   process.stderr.write('Not logged in\\n');
   process.exit(1);
 }
+if (args[0] === 'mcp' && args[1] === 'list') {
+  record({});
+  if (mode === 'mcp-fails') process.exit(1);
+  const names = (process.env.FAKE_CODEX_MCP ?? 'acme_files').split(',').filter(Boolean);
+  console.log(JSON.stringify(names.map((name) => ({ name, enabled: mode === 'mcp-stays-on' || !args.includes('mcp_servers.' + name + '.enabled=false') }))));
+  process.exit(0);
+}
 if (args[0] !== 'exec') process.exit(2);
 let input = '';
 process.stdin.setEncoding('utf8');
@@ -70,20 +89,25 @@ process.stdin.on('end', () => {
   record({ prompt: input });
   const emit = (e) => process.stdout.write(JSON.stringify(e) + '\\n');
   const resumed = args.includes('resume');
+  if (mode === 'resume-missing' && resumed) { process.stderr.write('Error: thread not found\\n'); process.exit(1); }
   const id = resumed ? args[args.length - 2] : require('node:crypto').randomUUID();
   emit({ type: 'thread.started', thread_id: id });
   emit({ type: 'turn.started' });
   if (mode === 'timeout') { setInterval(() => {}, 1000); return; }
   if (mode === 'client-error') { emit({ type: 'turn.failed', error: { message: 'synthetic usage limit reached' } }); process.exit(1); }
   if (mode === 'no-result') { process.stderr.write('synthetic crash\\n'); process.exit(4); }
-  const text = mode === 'malformed' ? 'Here is my review.\\nVerdict: Approve' : mode === 'empty' ? '' : '${CRITIQUE}';
+  if (mode === 'tool-use') emit({ type: 'item.started', item: { id: 'item_1', type: 'mcp_tool_call', server: 'codex_apps', tool: 'acme_search', arguments: {}, status: 'in_progress' } });
+  if (mode === 'web-search') emit({ type: 'item.completed', item: { id: 'item_1', type: 'web_search', query: 'acme' } });
+  emit({ type: 'item.completed', item: { id: 'item_r', type: 'reasoning', text: 'thinking' } });
+  emit({ type: 'item.completed', item: { id: 'item_c', type: 'command_execution', command: 'ls', status: 'completed' } });
+  const text = process.env.FAKE_TEXT ?? (mode === 'malformed' ? 'Here is my review.\\nVerdict: Approve' : mode === 'empty' ? '' : '${CRITIQUE}');
   emit({ type: 'item.completed', item: { id: 'item_0', type: 'agent_message', text } });
   emit({ type: 'turn.completed', usage: { input_tokens: 12, cached_input_tokens: 0, output_tokens: 34 } });
   const m = args.indexOf('-m') >= 0 ? args[args.indexOf('-m') + 1] : 'gpt-acme-default';
   const effort = (args.find((a) => a.startsWith('model_reasoning_effort=')) || '').match(/"(.*)"/)?.[1] ?? null;
   const dir = path.join(process.env.CODEX_HOME, 'sessions', '2026', '11', '02');
   fs.mkdirSync(dir, { recursive: true });
-  fs.appendFileSync(path.join(dir, 'rollout-2026-11-02-' + id + '.jsonl'), JSON.stringify({ type: 'turn_context', payload: { model: m, effort } }) + '\\n');
+  if (mode !== 'no-model') fs.appendFileSync(path.join(dir, 'rollout-2026-11-02-' + id + '.jsonl'), JSON.stringify({ type: 'turn_context', payload: { model: m, effort } }) + '\\n');
   if (mode === 'exit-after-review') process.exit(3);
 });
 `;
@@ -105,11 +129,12 @@ function box({ clients = ['claude', 'codex'], critic = undefined } = {}) {
   writeFileSync(prompt, 'Critique brief v1 for ticket ACME-1.\nReviewer: {REVIEWER}\nModel: {MODEL}\nWorkflow: {WORKFLOW}\nThe subject follows.\nAcme ships widgets.\n');
   const base = { PATH: [s.fakes, tools].join(delimiter), BOLLPLANK_APPS_DIR: join(s.root, 'apps'), FAKE_CAPTURE: capture };
   const call = (opts = {}, extraEnv = {}) => {
-    const { subject = 'brief', round = 1, lead = 'claude', critic: c, readDir, timeout, promptFile = prompt, ticket = 'ACME-1' } = opts;
+    const { subject = 'brief', round = 1, lead = 'claude', critic: c, readDir, timeout, promptFile = prompt, ticket = 'ACME-1', newSession } = opts;
     const args = ['critic', '--ticket', ticket, '--subject', subject, '--round', String(round), '--prompt-file', promptFile, '--lead', lead];
     if (c) args.push('--critic', c);
     if (readDir) args.push('--read-dir', readDir);
     if (timeout) args.push('--timeout', String(timeout));
+    if (newSession) args.push('--new-session');
     return s.run(args, { ...base, ...extraEnv });
   };
   const captures = () => (existsSync(capture) ? readFileSync(capture, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
@@ -150,9 +175,13 @@ test('the provider index names both providers and picks the other one', () => {
   assert.match(codex.testedVersion, /^\d+\.\d+\.\d+/);
 });
 
-test('the child environment loses every key and provider route and nothing else', () => {
+test('the child environment loses every key, provider route and session marker and nothing else', () => {
   const env = childEnv({ ANTHROPIC_API_KEY: 'x', ANTHROPIC_BASE_URL: 'x', OPENAI_API_KEY: 'x', CODEX_API_KEY: 'x', CODEX_ACCESS_TOKEN: 'x', CLAUDE_CODE_USE_BEDROCK: '1', AWS_BEARER_TOKEN_BEDROCK: 'x', AZURE_OPENAI_API_KEY: 'x', CODEX_HOME: '/h', CLAUDE_CONFIG_DIR: '/c', AWS_PROFILE: 'acme', HOME: '/home', PATH: '/bin' });
   assert.deepEqual(Object.keys(env).sort(), ['AWS_PROFILE', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'HOME', 'PATH']);
+  const markers = { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli', CLAUDE_PID: '1', CLAUDE_EFFORT: 'max', CLAUDE_AGENT_SDK_VERSION: '1', CLAUDE_CODE_SIMPLE: '1', CLAUDE_CODE_SESSION_ID: 'x', CLAUDE_CODE_HOST_SESSION_ID: 'x', CLAUDE_CODE_CHILD_SESSION: '1', CLAUDE_CODE_MESSAGING_SOCKET: 'x', CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH: '1' };
+  const lower = { anthropic_api_key: 'x', Openai_Api_Key: 'x', claudecode: '1', Claude_Pid: '1', claude_agent_sdk_version: '1' };
+  const kept = childEnv({ ...markers, ...lower, CLAUDE_CODE_OAUTH_TOKEN: 'acme-subscription', CLAUDE_CODECOV: 'acme', CLAUDE_CODE_MAX_OUTPUT_TOKENS: '1000', Path: 'C:\\acme' });
+  assert.deepEqual(Object.keys(kept).sort(), ['CLAUDE_CODECOV', 'CLAUDE_CODE_MAX_OUTPUT_TOKENS', 'CLAUDE_CODE_OAUTH_TOKEN', 'Path']);
 });
 
 test('session roots follow the client folders', () => {
@@ -334,7 +363,7 @@ test('a skipped or repeated round is refused before any client runs', { skip: fa
   assert.deepEqual(b.state('ACME-1.codex.json').rounds, { brief: 1, plan: 0, code: 0 });
 });
 
-test('claude: read-dir adds the real folder and denies shell and edit tools, otherwise neither', { skip: fakesSkip }, (t) => {
+test('claude: no tools without read-dir, and reads only inside the real folder with it', { skip: fakesSkip }, (t) => {
   const b = box();
   after(t, b);
   const src = join(b.s.root, 'acme source');
@@ -351,12 +380,16 @@ test('claude: read-dir adds the real folder and denies shell and edit tools, oth
     assert.equal(argAfter(c.args, '--setting-sources'), 'local');
     assert.ok(c.args.includes('--strict-mcp-config'));
     assert.equal(c.args.includes('--mcp-config'), false);
-    assert.equal(argAfter(c.args, '--tools'), 'Read,Grep,Glob');
+    assert.equal(argAfter(c.args, '--permission-prompts'), 'none');
     assert.equal(c.args.includes('--dangerously-skip-permissions'), false);
+    assert.equal(c.env.ENABLE_CLAUDEAI_MCP_SERVERS, 'false');
     assert.equal(realpathSync(c.cwd), realpathSync(join(b.s.bollplank, 'neutral')));
   }
-  assert.equal(first.args.includes('--add-dir'), false);
-  assert.equal(first.args.includes('--disallowedTools'), false);
+  assert.equal(argAfter(first.args, '--tools'), '');
+  for (const f of ['--allowedTools', '--add-dir', '--disallowedTools']) assert.equal(first.args.includes(f), false, f);
+  assert.equal(argAfter(second.args, '--tools'), 'Read,Grep,Glob');
+  assert.equal(argAfter(second.args, '--allowedTools'), `Read(/${realpathSync(src)}/**)`);
+  assert.match(argAfter(second.args, '--allowedTools'), /^Read\(\/\/.*acme source\/\*\*\)$/);
   assert.equal(argAfter(second.args, '--add-dir'), realpathSync(src));
   assert.equal(argAfter(second.args, '--disallowedTools'), 'Bash,Edit,Write,NotebookEdit,PowerShell');
 });
@@ -377,6 +410,10 @@ test('codex: read-dir is the working folder in a read only ChatGPT session, othe
     assert.ok(c.args.includes('--json'));
     assert.equal(argAfter(c.args, '--sandbox'), 'read-only');
     assert.ok(c.args.includes('forced_login_method="chatgpt"'));
+    assert.ok(c.args.includes('model_provider="openai"'));
+    assert.ok(c.args.includes('web_search="disabled"'));
+    for (const f of ['apps', 'plugins', 'remote_plugin', 'hooks', 'computer_use', 'browser_use', 'multi_agent']) assert.ok(c.args.some((a, i) => a === f && c.args[i - 1] === '--disable'), f);
+    assert.ok(c.args.includes('mcp_servers.acme_files.enabled=false'));
     assert.equal(argAfter(c.args, '-m'), 'gpt-acme');
     assert.ok(c.args.includes('model_reasoning_effort="high"'));
     assert.equal(c.args.includes('--approve-for-me'), false);
@@ -401,13 +438,15 @@ test('a missing read-dir is a usage failure', { skip: fakesSkip }, (t) => {
 test('scrubbed keys never reach the child, and other variables do', { skip: fakesSkip }, (t) => {
   const b = box();
   after(t, b);
-  const keys = { ANTHROPIC_API_KEY: 'sk-acme-1', OPENAI_API_KEY: 'sk-acme-2', CODEX_API_KEY: 'sk-acme-3', CODEX_ACCESS_TOKEN: 'acme', CLAUDE_CODE_USE_BEDROCK: '1', AWS_BEARER_TOKEN_BEDROCK: 'acme', AZURE_OPENAI_API_KEY: 'acme', ACME_KEEP: 'kept' };
+  const keep = { ACME_KEEP: 'kept', CLAUDE_CODE_OAUTH_TOKEN: 'acme-subscription' };
+  const keys = { ANTHROPIC_API_KEY: 'sk-acme-1', OPENAI_API_KEY: 'sk-acme-2', CODEX_API_KEY: 'sk-acme-3', CODEX_ACCESS_TOKEN: 'acme', CLAUDE_CODE_USE_BEDROCK: '1', AWS_BEARER_TOKEN_BEDROCK: 'acme', AZURE_OPENAI_API_KEY: 'acme', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'sdk-ts', CLAUDE_PID: '42', CLAUDE_EFFORT: 'max', CLAUDE_AGENT_SDK_VERSION: '1.0', ...keep };
   for (const lead of ['claude', 'codex']) assert.equal(b.call({ lead, ticket: `ACME-${lead === 'claude' ? 2 : 3}` }, keys).status, 0);
   const calls = b.captures();
   assert.ok(calls.length >= 4);
   for (const c of calls) {
-    for (const k of Object.keys(keys).filter((k) => k !== 'ACME_KEEP')) assert.equal(c.env[k], undefined, `${k} reached ${c.tool} ${c.args[0]}`);
+    for (const k of Object.keys(keys).filter((k) => !(k in keep))) assert.equal(c.env[k], undefined, `${k} reached ${c.tool} ${c.args[0]}`);
     assert.equal(c.env.ACME_KEEP, 'kept');
+    assert.equal(c.env.CLAUDE_CODE_OAUTH_TOKEN, 'acme-subscription');
     assert.ok(c.env.CODEX_HOME);
     assert.ok(c.env.CLAUDE_CONFIG_DIR);
   }
@@ -454,7 +493,9 @@ test('the posted Model line names the model that ran, whatever the critic wrote'
     const r = b.call({ lead, ticket: lead === 'claude' ? 'ACME-1' : 'ACME-2' });
     assert.equal(r.status, 0);
     assert.notEqual(r.json.model, 'Unverified');
-    assert.match(r.json.text, new RegExp(`^Model: ${r.json.model.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}, `, 'm'));
+    assert.equal(r.json.text.split('\n').find((l) => l.startsWith('Model:')), `Model: ${r.json.model}`);
+    assert.match(r.json.model, /, effort unverified$/);
+    assert.equal(r.json.model.split(', ').length, 2);
     assert.equal(/^Model: fake$/m.test(r.json.text), false);
   }
 });
@@ -532,4 +573,145 @@ test('a ledger that cannot be written never fails the call', { skip: fakesSkip }
   writeFileSync(join(b.s.bollplank, 'ledger'), 'a file where the folder should be');
   const r = b.call({ lead: 'claude' });
   assert.equal(r.status, 0, r.stdout);
+});
+
+// A critic that used or was given a tool beyond the allowed reads: no state, a binding, no text.
+const toolCases = [
+  ['claude', 'tool-use', /called the tool mcp__acme__search/],
+  ['claude', 'init-mcp', /started 1 MCP server/],
+  ['claude', 'init-tools', /offered the tools Bash, mcp__acme__search/],
+  ['codex', 'tool-use', /called the MCP tool acme_search/],
+  ['codex', 'web-search', /used a web_search item/],
+];
+for (const [critic, mode, detail] of toolCases) {
+  test(`${critic}: ${mode} fails as critic-used-tools, keeps no state and never returns the text`, { skip: fakesSkip }, (t) => {
+    const b = box();
+    after(t, b);
+    const lead = critic === 'claude' ? 'codex' : 'claude';
+    const r = b.call({ lead }, { FAKE_MODE: mode, FAKE_TEXT: 'Critique of ACME-1 brief v1\nVerdict: Approve\nAcme secret answer' });
+    assert.equal(r.status, 1, r.stdout);
+    assert.equal(r.json.failure, 'critic-used-tools');
+    assert.match(r.json.detail, detail);
+    assert.equal(r.stdout.includes('Acme secret answer'), false);
+    assert.equal(r.json.text, undefined);
+    assert.equal(r.json.receivedReview, undefined);
+    assert.equal(b.state(`ACME-1.${critic}.json`), null);
+    const [entry] = b.bindings();
+    assert.ok(entry?.session, 'the session is bound for the ledger');
+    assert.equal(entry.session, r.json.sessionId);
+  });
+}
+
+test('codex: the critic is not started when its MCP servers cannot all be switched off', { skip: fakesSkip }, (t) => {
+  const b = box();
+  after(t, b);
+  for (const [mode, extra, detail] of [['mcp-fails', {}, /did not list its MCP servers/], ['mcp-stays-on', {}, /still lists an MCP server as enabled/], ['ok', { FAKE_CODEX_MCP: 'acme.files' }, /cannot be switched off/]]) {
+    const r = b.call({ lead: 'claude' }, { FAKE_MODE: mode, ...extra });
+    assert.equal(r.json.failure, 'critic-unavailable', mode);
+    assert.match(r.json.detail, detail);
+  }
+  assert.deepEqual(b.reviews(), []);
+  assert.equal(b.state('ACME-1.codex.json'), null);
+  const lists = b.captures().filter((c) => c.args[0] === 'mcp');
+  assert.ok(lists.every((c) => c.args.includes('--json') && c.args.includes('model_provider="openai"') && c.args.includes('apps')));
+  const none = b.call({ lead: 'claude' }, { FAKE_CODEX_MCP: '' });
+  assert.equal(none.status, 0, none.stdout);
+  assert.equal(b.reviews().at(-1).args.some((a) => a.startsWith('mcp_servers.')), false);
+});
+
+test('the header is the wrapper\'s: wrong lines are rewritten and missing ones inserted in order', { skip: fakesSkip }, (t) => {
+  const b = box({ critic: { providers: { claude: { model: 'claude-acme', effort: 'high' } } } });
+  after(t, b);
+  const reply = 'Critique of ACME-1 brief v1\nModel: guessed, low\nDate: 2026-11-02\nVerdict: Revise\n\nModel: a quoted line in the body stays.';
+  const r = b.call({ lead: 'codex' }, { FAKE_TEXT: reply });
+  assert.equal(r.status, 0, r.stdout);
+  const lines = r.json.text.split('\n');
+  assert.equal(lines[0], 'Critique of ACME-1 brief v1');
+  assert.equal(lines[1], 'Reviewer: Claude Code');
+  assert.equal(lines[2], 'Model: claude-acme, high');
+  assert.match(lines[3], /^Workflow: Bollplank /);
+  assert.equal(lines[4], 'Date: 2026-11-02');
+  assert.ok(lines.includes('Model: a quoted line in the body stays.'));
+  assert.equal(r.json.model, 'claude-acme, high');
+  const header = 'Critique of ACME-1 brief v1\nWorkflow: made up\nReviewer: made up\nVerdict: Approve';
+  const again = b.call({ lead: 'codex', round: 2 }, { FAKE_TEXT: header });
+  const top = again.json.text.split('\n');
+  assert.deepEqual(top.slice(0, 2), ['Critique of ACME-1 brief v1', 'Workflow: ' + lines[3].slice(10)]);
+  // Model goes after Reviewer, the line before it in the order.
+  assert.equal(top[2], 'Reviewer: Claude Code');
+  assert.equal(top[3], 'Model: claude-acme, high');
+});
+
+test('an unverified model is posted as Unverified, and a pinned one is never doubled', { skip: fakesSkip }, (t) => {
+  const b = box({ critic: { providers: { codex: { effort: 'high' }, claude: { model: 'claude-acme', effort: 'max' } } } });
+  after(t, b);
+  const codexRun = b.call({ lead: 'claude' }, { FAKE_MODE: 'no-model' });
+  assert.equal(codexRun.status, 0, codexRun.stdout);
+  assert.equal(codexRun.json.model, 'Unverified');
+  assert.ok(codexRun.json.text.split('\n').includes('Model: Unverified'));
+  const claudeRun = b.call({ lead: 'codex' }, { FAKE_MODE: 'no-model' });
+  assert.equal(claudeRun.json.model, 'claude-acme, max');
+  const ran = b.call({ lead: 'codex', round: 2 });
+  assert.equal(ran.json.model, 'claude-acme, max');
+  assert.ok(ran.json.text.split('\n').includes('Model: claude-acme, max'));
+});
+
+for (const critic of ['claude', 'codex']) {
+  const lead = critic === 'claude' ? 'codex' : 'claude';
+  test(`${critic}: a session the client lost fails clearly, and --new-session recovers it with the counts kept`, { skip: fakesSkip }, (t) => {
+    const b = box();
+    after(t, b);
+    assert.equal(b.call({ lead }).status, 0);
+    const saved = b.state(`ACME-1.${critic}.json`);
+    const lost = b.call({ lead, round: 2 }, { FAKE_MODE: 'resume-missing' });
+    assert.equal(lost.json.failure, 'session-missing', lost.stdout);
+    assert.match(lost.json.detail, /no longer has the critic session/);
+    assert.match(lost.json.detail, /--new-session/);
+    assert.deepEqual(b.state(`ACME-1.${critic}.json`), saved);
+    const fresh = b.call({ lead, round: 2, newSession: true }, { FAKE_MODE: 'resume-missing' });
+    assert.equal(fresh.status, 0, fresh.stdout);
+    assert.equal(fresh.json.sessionRestarted, true);
+    assert.notEqual(fresh.json.sessionId, saved.sessionId);
+    assert.deepEqual(b.state(`ACME-1.${critic}.json`), { sessionId: fresh.json.sessionId, rounds: { brief: 2, plan: 0, code: 0 } });
+    const call = b.reviews().at(-1);
+    if (critic === 'claude') assert.equal(call.args.includes('--resume'), false);
+    else assert.equal(call.args.includes('resume'), false);
+    const next = b.call({ lead, subject: 'plan' });
+    assert.equal(next.json.sessionId, fresh.json.sessionId);
+    assert.equal(next.json.sessionRestarted, undefined);
+  });
+}
+
+test('a second call for the same ticket, provider and mode fails as critic-busy and runs nothing', { skip: fakesSkip }, (t) => {
+  const b = box();
+  after(t, b);
+  const lock = join(b.s.bollplank, 'critics', 'ACME-1.codex.json.lock');
+  mkdirSync(lock, { recursive: true });
+  const r = b.call({ lead: 'claude' });
+  assert.equal(r.status, 1);
+  assert.equal(r.json.failure, 'critic-busy');
+  assert.ok(r.json.detail.includes(lock));
+  assert.deepEqual(b.captures(), []);
+  // Another ticket or another mode is not blocked.
+  assert.equal(b.call({ lead: 'claude', ticket: 'ACME-2' }).status, 0);
+  assert.equal(b.call({ lead: 'codex' }).status, 0);
+  rmSync(lock, { recursive: true });
+  const ok = b.call({ lead: 'claude' });
+  assert.equal(ok.status, 0, ok.stdout);
+  assert.equal(existsSync(lock), false, 'the lock is released');
+  const failed = b.call({ lead: 'claude', round: 2 }, { FAKE_MODE: 'malformed' });
+  assert.equal(failed.json.failure, 'malformed-answer');
+  assert.equal(existsSync(lock), false, 'the lock is released after a failure');
+  assert.deepEqual(readdirSync(join(b.s.bollplank, 'critics')).filter((n) => n.includes('.tmp')), []);
+});
+
+test('a missing provider is reported before a round mismatch, and a mismatch starts no client', { skip: fakesSkip }, (t) => {
+  const b = box({ clients: ['claude'] });
+  after(t, b);
+  const r = b.call({ lead: 'claude', round: 3 });
+  assert.equal(r.json.failure, 'critic-unavailable');
+  assert.deepEqual(b.captures(), []);
+  const mismatch = b.call({ lead: 'codex', round: 3 });
+  assert.equal(mismatch.json.failure, 'round-mismatch');
+  assert.deepEqual(b.captures(), []);
 });

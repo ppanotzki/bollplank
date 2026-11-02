@@ -85,7 +85,9 @@ if (tests.length && !skipTests) {
 
 const privacy = scan(root, 'HEAD');
 if (privacy.outcome === 'skipped') problems.push(`private names: skipped, which does not pass. ${privacy.reason}`);
-if (privacy.outcome === 'failed') problems.push(`private names: ${privacy.hits.length} hits, ${privacy.hits.slice(0, 10).map((h) => `pattern ${h.pattern} in ${h.file ?? 'a commit message'} at ${h.commit}`).join('; ')}`);
+// A hit names only its pattern, its commit and a file whose path matches nothing, never the name.
+if (privacy.outcome === 'failed' && !privacy.hits) problems.push(`private names: failed. ${privacy.reason}`);
+if (privacy.outcome === 'failed' && privacy.hits) problems.push(`private names: ${privacy.hits.length} hits, ${privacy.hits.slice(0, 10).map((h) => `pattern ${h.pattern} in ${h.file ?? 'a commit message or author'} at ${h.commit}`).join('; ')}`);
 
 if (problems.length) {
   console.error(`bollplank check FAILED (${problems.length}):\n${problems.map((p) => `- ${p}`).join('\n')}`);
