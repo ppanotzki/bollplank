@@ -12,7 +12,7 @@ import { sandbox, fakesSkip, bin } from './helpers.mjs';
 const TEAMS = `
 const statuses = (process.env.FAKE_STATUSES || 'Backlog,Draft,Ready,In Progress,Acceptance,Done').split(',');
 const TEAMS_TEXT = JSON.stringify({ teams: [{ id: 't1', key: 'ACME', name: 'Acme', states: statuses.map((name) => ({ name })), projects: (process.env.FAKE_PROJECTS || 'Shop,Widgets').split(',').map((name) => ({ name })) }] });
-const REPLY = JSON.stringify({ teams: [{ key: 'ACME', name: 'Acme', statuses: process.env.FAKE_REPLY_STATUSES ? process.env.FAKE_REPLY_STATUSES.split(',') : process.env.FAKE_REPLY_LOWER ? statuses.map((s) => s.toLowerCase()) : statuses, projects: ['Shop', 'Widgets'] }, { key: 'GLOBEX', name: 'Globex', statuses: ['Todo'], projects: [] }] });
+const REPLY = JSON.stringify({ teams: [{ key: 'ACME', name: process.env.FAKE_REPLY_NAME || 'Acme', statuses: process.env.FAKE_REPLY_STATUSES ? process.env.FAKE_REPLY_STATUSES.split(',') : process.env.FAKE_REPLY_LOWER ? statuses.map((s) => s.toLowerCase()) : statuses, projects: ['Shop', 'Widgets'] }, { key: 'GLOBEX', name: 'Globex', statuses: ['Todo'], projects: [] }] });
 `;
 
 // FAKE_LINEAR: none (no Linear tool), real (a real tool call), claimed (a reply with no call),
@@ -291,6 +291,18 @@ test('doctor takes a status only from a whole status name, never from a project 
   const longer = byId(b.doctor(['--json'], { FAKE_STATUSES: 'Backlog,Draft,Ready,In Progress,Awaiting Acceptance,Done', FAKE_REPLY_STATUSES: 'Backlog,Draft,Ready,In Progress,Acceptance,Done' }))['board.status.ACME.acceptance'];
   assert.equal(longer.ok, false);
   assert.match(longer.fix, /add a status named "Acceptance"/);
+});
+
+test('doctor never passes a team made of one team\'s key and another\'s name', { skip: fakesSkip }, (t) => {
+  const b = box(t);
+  b.install();
+  const file = join(b.s.bollplank, 'config.json');
+  const config = JSON.parse(readFileSync(file, 'utf8'));
+  writeFileSync(file, JSON.stringify({ ...config, board: { ...config.board, team: 'Globex', project: 'Shop' } }));
+  // The model pairs the key ACME with the name Globex. Linear's only team here is ACME, named Acme.
+  const c = byId(b.doctor(['--json'], { FAKE_REPLY_NAME: 'Globex' }));
+  assert.equal(c['board.team.Globex'].ok, false);
+  assert.equal(c['board.project.Globex.Shop']?.ok ?? false, false);
 });
 
 test('doctor shows a Claude probe stopped by a broad Linear allow rule, with its own fix', { skip: fakesSkip }, (t) => {

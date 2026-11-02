@@ -485,6 +485,28 @@ test('judge takes names only as whole values from their own fields', () => {
   assert.deepEqual(r.teams[0].statuses, ['Acceptance']);
 });
 
+test('judge keeps every name with its own team: by the call\'s arguments, never offered to every team', () => {
+  const teamsTool = { name: 'mcp__acme_linear__list_teams', ok: true, text: JSON.stringify({ teams: [{ id: 't1', key: 'ACME', name: 'Acme' }, { id: 't2', key: 'GLOBEX', name: 'Globex' }] }) };
+  // A status list with no team field, asked for GLOBEX by its id, belongs to GLOBEX only.
+  const globexStates = { name: 'mcp__acme_linear__list_issue_statuses', ok: true, args: { team: 't2' }, text: JSON.stringify([{ name: 'Acceptance' }, { name: 'Todo' }]) };
+  const reply = JSON.stringify({ teams: [{ key: 'ACME', name: 'Acme', statuses: ['Acceptance'] }, { key: 'GLOBEX', name: 'Globex', statuses: ['Acceptance', 'Todo'] }] });
+  const r = judge('Acme client', [teamsTool, globexStates], reply);
+  assert.equal(r.ok, true, r.detail);
+  assert.deepEqual(r.teams.find((x) => x.key === 'ACME').statuses, []);
+  assert.deepEqual(r.teams.find((x) => x.key === 'GLOBEX').statuses, ['Acceptance', 'Todo']);
+  // Codex passes arguments as a JSON string.
+  const asString = judge('Acme client', [teamsTool, { ...globexStates, args: JSON.stringify({ teamId: 't2' }) }], reply);
+  assert.deepEqual(asString.teams.find((x) => x.key === 'GLOBEX').statuses, ['Acceptance', 'Todo']);
+  // With no owner at all, the statuses are dropped for every team.
+  const unowned = judge('Acme client', [teamsTool, { ...globexStates, args: null }], reply);
+  assert.deepEqual(unowned.teams.map((x) => x.statuses), [[], []]);
+  // A key from one team and a name from another lead to no team at all.
+  const withProjects = { ...teamsTool, text: JSON.stringify({ teams: [{ key: 'ACME', name: 'Acme', projects: [{ name: 'Shop' }] }, { key: 'GLOBEX', name: 'Globex', projects: [{ name: 'Widgets' }] }] }) };
+  const mixed = judge('Acme client', [withProjects], JSON.stringify({ teams: [{ key: 'ACME', name: 'Globex', projects: ['Shop'] }] }));
+  assert.equal(mixed.ok, false);
+  assert.match(mixed.detail, /no team in its reply came from the tool/);
+});
+
 test('addLinearMcp runs the documented add and login commands for each client', { skip: fakesSkip }, (t) => {
   const b = box(t, { linear: 'none' });
   const env = { ...b.s.env, ...b.env };
