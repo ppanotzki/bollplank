@@ -1,7 +1,7 @@
 # NEO-182 implementation plan: Bollplank 0.2.0
 
-Plan v8
-Status: Revised after Codex's plan v7 round (one point accepted), for the next round
+Plan v9
+Status: Revised after Codex's plan v8 round. The headless create call is replaced by a create in the user's own session, for the next round
 Ticket: NEO-182, brief v10, approved 2026-11-02, Cross-model review both
 Responsible: Claude Code
 Model: Claude Opus 5.5
@@ -42,11 +42,14 @@ The critic reads the issue and its comments itself and posts its own critique, a
 
 ## 3. Board setup on request (decision 18)
 
-* **Create a project.** In init step 3 and step 5, when the named Linear project does not exist in the team read, init asks "Create the Linear project <name> in <team>?" (default no). On yes it runs one write call through Claude Code, and the write is blocked unless a check positively approves it, so a check that fails to run leaves it blocked. The call runs with `--permission-mode dontAsk`, which denies every tool that is not allowed, and the create tools (`save_project` or `create_project`, with or without a `linear_` prefix) are not on the allow list. A `PreToolUse` hook given through `--settings` is the only way one of them can run: a small Node script in Bollplank that returns `permissionDecision: "allow"` only when the tool is one of those two, the input has no `id`, the project name equals the confirmed name, the team list names only the confirmed team (by its key, name or id from the read), and no earlier call in this run was allowed. For anything else it returns deny. A hook that is missing, crashes, times out or prints something malformed allows nothing, so dontAsk denies the call. That holds only when no saved setting approves a create tool, since dontAsk runs any tool a saved `permissions.allow` rule approves, and a deny rule would also block the hook's allow. So before the call init reads the same settings files the probe reads (`savedLinearAllows`: user, user local, the call folder's project and local settings, and managed settings), for every Linear server and connector id. When any rule approves a create tool, by its own name, by a wildcard over the Linear server, by the whole server, or by a broader wildcard such as `mcp__*`, or when a settings file cannot be read, init does not start the call. It says which rule in which file, gives the steps to create the project in Linear, and changes no setting. So an update to another project never runs, even if a later readback finds the new one. Init then reads Linear again with the read only probe and continues only when the project is there.
+Plan v5 to v8 tried a headless write call from init, guarded by hooks and permission rules. Each round found another way the user's own settings, hooks or plugins could approve a different write, and Codex has no guard that fails closed. Plan v9 drops that machinery. Init never writes to the board. A board change the user asks for is made in the user's own Claude Code or Codex session, where the client shows the exact tool call with its arguments and the user's own permission settings apply, as for any other board write the user asks for. That is decision 18's "after asking first", with the human in charge.
 
-**With only Codex installed** init gives the steps to create the project in Linear, as for a status. Codex's hooks are documented as not stopping a call when the hook errors, times out or returns malformed output, and Codex has no deny by default for MCP calls that a hook could lift, so the confirmed create cannot be enforced there. This is flagged in the brief's Known edge cases, and the guide says creation from init needs Claude Code. Answers file key `createProject.<team>.<project>`.
-* **Statuses.** Linear's MCP server has no tool to create a status. For each missing status init gives the steps in Linear's settings (Settings, Teams, the team, Workflow, the status group) and offers to read again, as today, up to three times.
-* `judge()` and the read only probe are unchanged. The write call has its own judge: at most one allowed call, all others denied by the hook, and a readback that shows the project.
+* **The board skill** (`skills/bollplank-board`) gains two operations, used only when the user asks:
+  * **Create a project.** Confirm the team and the exact name with the user first. Call the board's create tool once, with no id of an existing project, then read the team's projects back and report the result. Never update or move an existing project as part of it.
+  * **Check the statuses.** Read the team's statuses and compare them with the project's mapping from `bollplank context <project>`. Linear's MCP server cannot create a status, so give the steps in Linear's settings for each one missing.
+* **Init**, when the named Linear project is missing from the team read, offers three choices: pick another project, create it now from your Claude Code or Codex session (init prints the sentence to type, such as "Create the Linear project Acme Shop in team ACME", and waits), or create it in Linear yourself (init prints the steps). After either create choice it reads Linear again with the read only probe and continues only when the project is there, up to three tries, as for a status. Answers file key `missingProject.<team>.<project>` with `other`, `session` or `linear`, so tests and scripted setups never wait.
+* **Statuses** stay as today: the steps in Linear's settings and a fresh read, up to three times.
+* `judge()`, the read only probe and every headless call stay read only. No Bollplank command starts a write to the board.
 
 ## 4. Docs (Phase 5)
 
@@ -67,7 +70,7 @@ Short and to the point. Each page says what to do and why in as few lines as it 
 
 1. Statuses per project, with tests (config, context, doctor, init answers).
 2. The critic on the board, with tests against the fake clients, then a real smoke run of each critic on a synthetic issue-less prompt that only reads `list_teams` and posts nothing, plus one real critique of this plan's next round if the plan gate is still open.
-3. Board setup, with tests: the write call's allowed tools, refusal of any other tool, and the readback.
+3. Board setup: the board skill's two operations and init's three choices for a missing project, with tests.
 4. Docs, after 1 to 3 so they describe the code.
 5. Gate, full tests, review, test and hunt subagents, Codex code rounds, then removal of `docs/plans/` as the last commit.
 
@@ -82,11 +85,9 @@ Steps 1 and 3 touch `init.mjs` both, so they run in order, not in parallel. Docs
 * No Linear server in the critic's client fails as `critic-unavailable` before any model turn.
 * Two projects in different teams with different status names validate, `context` returns each project's own mapping, and doctor checks each against its own team.
 * A project with no mapping of its own uses the top level one, and with none at all, Linear's suggestion.
-* With only Codex, init offers no creation and gives the steps. No Codex write call is ever started.
-* Init with an answers file creates a missing project only on `createProject` yes, allows only the create project tool, and reads it back. A no leaves Linear untouched.
-* The hook denies `save_project` with an `id`, with another name, with another team or a second team, and a second create, and allows exactly the confirmed create. A fake Claude that tries an update first never gets it run.
-* A saved allow rule for `mcp__<linear>__save_project`, for `mcp__<linear>__*`, for the whole Linear server, or for `mcp__*`, in each settings file, stops creation before any call, with the rule named and the steps given. Combined with each hook failure case, no write call is ever started. An unreadable settings file stops it too.
-* With the hook missing, crashing, timing out or printing malformed output, a fake Claude that honours dontAsk runs no create and no update, including an update to another project's id. The argv has the create tools absent from `--allowedTools` and `--permission-mode dontAsk`.
+* Init with a missing project and `missingProject` set to `session` or `linear` prints the sentence or the steps, reads Linear again and continues once the project is there, and stops after three reads without it. With `other` it asks for another project.
+* No Bollplank command starts a board write: every headless call to a client is the read only probe or a critic, and a test checks that init's argv for each client never allows a tool that is not a read.
+* The board skill text has the create a project operation with the confirmation, one create call without an existing id, and the readback, and the check the statuses operation.
 * A critic that never read the issue, or whose read failed, fails as `board-unreachable` and the round count stays. A critic that read the subject but whose post failed returns `posted: false` and counts.
 * A reported model that differs from the pinned one comes back as `modelCorrection` and in the returned header.
 * The docs check fails on a real ticket key and on `aw-` in docs, and passes on `ACME-1`.
