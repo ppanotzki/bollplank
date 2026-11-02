@@ -1,7 +1,7 @@
 # NEO-182 implementation plan: Bollplank v1
 
-Plan v2
-Status: Revised after Codex's round 1 (all four points accepted), for round 2
+Plan v3
+Status: Revised after Codex's round 2 (both points accepted), for round 3
 Ticket: NEO-182, brief v6, approved 2026-11-02, Cross-model review both
 Responsible: Claude Code
 Model: Claude Opus 5.5
@@ -64,7 +64,7 @@ This plan covers how the brief is built. It does not reopen the brief's settled 
   * Every provider and key variable is removed from the child's environment, with the kit's pattern.
 * **Critic choice.** `--critic other|same|claude|codex`, default from config. `other` means the provider that is not leading. Nothing ever switches the choice on its own. When the chosen provider is missing or not signed in, the call fails with `critic-unavailable`, and a selected review stage waits, as the kit's does today. `same` is used only when it was chosen: in config, by the approver for a ticket, or on the command line by the lead on the approver's word.
   * `init` offers `same` as the default when only one client is found, and says what that means. It never rewrites an existing `other` setting without asking.
-  * A brief may name the critic in its Cross-model review line, for example `Cross-model review: plan, same model`. That approved choice wins over config for the ticket, and the critique skill refuses to run a different critic for it.
+  * A brief may name its critic in an optional header line of its own, `Critic: other|same|claude|codex`, under the Cross-model review line, whose format stays as it is. That approved choice wins over config for the ticket, and the critique skill refuses to run a different critic for it. Keeping it on its own line leaves the review check of the consulting and configuration helper (`^Cross-model review: <review>` followed by a period, a space or the end) working unchanged.
 * **Same model mode.** A fresh session per ticket that inherits nothing, `prompts/critic-same.md` with a harder adversarial brief (find the strongest reason the subject fails, check every claim against the source, no credit for intent), and `critic.same.<provider>` for a different model or effort when the subscription offers one. The header reads `Reviewer: Claude Code, same provider, separate session`.
 * **Sessions and rounds are separate.** One critic session per ticket, provider and mode is reused across subjects, so the critic remembers the brief when it reviews the plan. Rounds are counted per subject series: the lead passes `--subject brief|plan|code` and `--round n` from the board's comments, and the wrapper refuses with `round-mismatch` when its saved count for that ticket, provider, mode and series is not `n - 1`. A revised subject continues its series. The state file holds `{sessionId, rounds: {brief, plan, code}}`.
 * **Results.** The kit's success rule (the reply starts with `Critique of ` and has a `Verdict:` line) and failure codes stay, plus `usage` for a missing prompt file instead of a crash. State goes to `~/.bollplank/critics/<TICKET>.<provider>[.same].json`. Every call with a session is bound in the ledger, failed calls too.
@@ -114,8 +114,8 @@ Skills speak of "the issue", "a comment" and "the status Ready". `skills/bollpla
 
 **Private name check.** The names to look for cannot be listed in a public repo without publishing them. The check reads them from `$BOLLPLANK_PRIVATE_NAMES` (a repository secret in CI) or `~/.bollplank/private-names.txt` locally, and searches every tracked file and the full history of the candidate commit.
 
-* It has three outcomes: `passed`, `failed` and `skipped`, and only `passed` lets the gate pass. Without the list the result is `skipped`, and the gate fails with a clear message. A pull request from a fork therefore gets a failing check until a maintainer runs it with the list, and cannot be merged before that.
-* `bollplank merge` runs the scan itself, with the local list, against the PR's head commit and its history before it merges, and refuses on `failed` or `skipped`.
+* It has three outcomes: `passed`, `failed` and `skipped`, and only `passed` lets Bollplank's own gate pass. Without the list the result is `skipped`, and the gate fails with a clear message. A pull request from a fork therefore gets a failing check until a maintainer runs it with the list, and cannot be merged before that. This gate is Bollplank's own, in its own repo. Users' projects have their own gates.
+* **Only projects that ask for it are scanned at merge.** A project's config may set `"privateScan": true`. For such a project `bollplank merge` runs the scan itself, with the local list, against the PR's head commit and its history before it merges, and refuses on `failed` or `skipped`. Paul's config sets it for the `bollplank` project. A project without it merges on its checks and review stages alone, as in the kit, so a new user with no list is never blocked.
 * Making the repo public, which stays Paul's step, is preceded by a full history scan with the list, and its result is recorded in the run log.
 * **Before the first code commit**, the lead writes Paul's list to `~/.bollplank/private-names.txt` on this Mac and sets the same list as the `BOLLPLANK_PRIVATE_NAMES` secret in the private repo, so every commit of this ticket is scanned from the start. The plan commit and the skeleton already on the branch are scanned then too. The list later moves into Paul's private config repo.
 
@@ -161,7 +161,8 @@ CI runs the gate on Ubuntu, macOS and Windows with Node 20 and 22. Tests that ne
 * `bollplank critic --critic same` with only a fake Claude produces a labelled same provider critique, and `--critic other` with both fakes picks the other provider.
 * `--critic other` with only one fake client fails with `critic-unavailable` and leaves the selected stage incomplete. It never runs `same` on its own.
 * One ticket's critic goes through brief rounds 1 and 2, plan round 1 and code round 1 in one reused session without a `round-mismatch`, and a skipped or repeated round in a series is refused.
-* The gate with no private names list reports `skipped` and fails, and `bollplank merge` refuses a PR whose scan is `skipped` or `failed`.
+* Bollplank's gate with no private names list reports `skipped` and fails. For a project with `privateScan`, `bollplank merge` refuses a PR whose scan is `skipped` or `failed`. A project without it merges on green checks and complete stages with no list present.
+* An approved brief with a `Critic: same` line initializes a consulting run and a configuration run, and a brief whose Cross-model review value differs from the requested one is still refused in both.
 * This ticket's own merge records the PR, final head and merge commit in its run record, and `aw-ticket remove` accepts the folder afterwards.
 * A synthetic repository run goes through plan, gates, merge refusal before the code gate, merge after it, and each deploy kind.
 * A synthetic ledger with one session marked by `aw-ledger mark` then `bollplank ledger mark` splits correctly and is reported as using both kits.
