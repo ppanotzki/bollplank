@@ -24,7 +24,9 @@ test('install.sh --no-init links the command, records it and prints the PATH lin
   assert.equal(lstatSync(b.link).isSymbolicLink(), true);
   assert.equal(readlinkSync(b.link), join(realpathSync(kit), 'bin', 'bollplank'));
   assert.match(r.stdout, /The kit is at .*\. The recommended place is ~\/\.bollplank\/kit/);
-  assert.match(r.stdout, /\.local\/bin is not on your PATH\. Add this line to ~\/\.bashrc, then open a new terminal:/);
+  // Bash on macOS reads ~/.bash_profile for a login shell, elsewhere ~/.bashrc, as doctor says.
+  const profile = process.platform === 'darwin' ? 'bash_profile' : 'bashrc';
+  assert.match(r.stdout, new RegExp(`\\.local/bin is not on your PATH\\. Add this line to ~/\\.${profile}, then open a new terminal:`));
   assert.match(r.stdout, /^ {2}export PATH="\$HOME\/\.local\/bin:\$PATH"$/m);
   assert.match(r.stdout, /Installed\. Run bollplank init/);
   const record = JSON.parse(readFileSync(join(b.s.bollplank, 'install.json'), 'utf8'));
@@ -93,4 +95,12 @@ process.exit(2);
   assert.equal(path.ok, true, path.detail);
   assert.equal(path.detail, `${b.link}, a link into this kit`);
   assert.equal(result.doctor.ok, true, JSON.stringify(result.doctor.checks.filter((c) => c.ok === false)));
+});
+
+test('install.sh gives fish users the fish_add_path line', { skip }, (t) => {
+  const b = box(t);
+  const r = b.install(['--no-init'], { SHELL: '/usr/local/bin/fish' });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /Run this once in fish, then open a new terminal:/);
+  assert.match(r.stdout, /^ {2}fish_add_path \$HOME\/\.local\/bin$/m);
 });

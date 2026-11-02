@@ -88,14 +88,24 @@ node "$kit/lib/setup/links.mjs" record-bin "$link"
 case ":$PATH:" in
   *":$bin_dir:"*) ;;
   *)
+    # The same advice as bollplank doctor gives.
+    echo
     case "$(basename "${SHELL:-}")" in
-      bash) profile="~/.bashrc" ;;
-      *) profile="~/.zshrc" ;;
+      fish)
+        echo "$bin_dir is not on your PATH. Run this once in fish, then open a new terminal:"
+        echo
+        echo "  fish_add_path \$HOME/.local/bin"
+        ;;
+      *)
+        case "$(basename "${SHELL:-}")" in
+          bash) if [ "$(uname -s)" = Darwin ]; then profile="~/.bash_profile"; else profile="~/.bashrc"; fi ;;
+          *) profile="~/.zshrc" ;;
+        esac
+        echo "$bin_dir is not on your PATH. Add this line to $profile, then open a new terminal:"
+        echo
+        echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+        ;;
     esac
-    echo
-    echo "$bin_dir is not on your PATH. Add this line to $profile, then open a new terminal:"
-    echo
-    echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
     echo
     ;;
 esac

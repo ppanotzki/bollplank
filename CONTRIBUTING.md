@@ -8,7 +8,7 @@ Bollplank is small on purpose: plain Node 20 or later, ESM, no dependencies. A c
 node scripts/check.mjs
 ```
 
-It checks that every script parses, every skill has valid frontmatter with a name starting `bollplank-`, the prompts keep their placeholders, the example config validates, every test in `test/` passes, and the private name check passes. The same command runs on every PR as the `checks` workflow, on Ubuntu and Windows with Node 20 and 22. CI leaves out macOS, because GitHub often has no macOS runner free, so run the gate on your Mac before you open a PR and say so in it. `node scripts/check.mjs --no-tests` skips the tests while you iterate. The PR check always runs them.
+It checks that every script parses, every skill has valid frontmatter with a name starting `bollplank-`, the prompts keep their placeholders, the docs, skills and prompts name no ticket key other than `ACME-<n>` and no internal tool, the example config validates, every test in `test/` passes, and the private name check passes. The same command runs on every PR as the `checks` workflow, on Ubuntu and Windows with Node 20 and 22. CI leaves out macOS, because GitHub often has no macOS runner free, so run the gate on your Mac before you open a PR and say so in it. `node scripts/check.mjs --no-tests` skips the tests while you iterate. The PR check always runs them.
 
 ## Tests
 

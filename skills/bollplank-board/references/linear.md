@@ -18,6 +18,13 @@ Send markdown with real newlines, never escaped `\n`.
 | Release notes | lists or searches documents, gets a document, and saves or creates a document | Search the project's documents for the title "Release notes". Create it in the project when it is missing. Put the new section at the top and keep everything else unchanged. Read it back. |
 | Find raised issues | lists or searches issues | Search the team for `Raised by: <TICKET>`, then read each hit and keep only those whose header line names this ticket. |
 
+## Setup operations, only when the user asks
+
+| Operation | The Linear tool that | Notes |
+|---|---|---|
+| Create a project | lists the team's projects, and saves or creates a project | First list the team's projects. If one has the exact name, create nothing and say so. After the user confirms the team and the name, call the create tool once with the team and the name and no project id, since a call with an id updates that project. Then list the team's projects again and report the new one by its exact name. |
+| Check the statuses | lists the team's issue statuses | Compare each name from `board.statuses` exactly. Linear's MCP server cannot create a status. For each missing one, give these steps: open Linear, go to Settings, then Teams, then the team, then Workflow, and add a status with that exact name in its group. The group follows the state the name is mapped to: draft under Backlog, ready under Unstarted, inProgress and acceptance under Started, and done under Completed. A new Linear team has Backlog, Todo, In Progress, Done and Canceled, so Draft, Ready and Acceptance are usually the ones to add. |
+
 Linear's Releases feature is not used. It needs a paid plan and CI pipelines, and groups by deploy, not by ticket.
 
 ## Readback for consulting and configuration runs

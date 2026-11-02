@@ -4,19 +4,22 @@
 // 2. Every script in bin/, lib/ and scripts/ parses.
 // 3. Every skill has frontmatter, a name equal to its folder that starts with bollplank-, and a description.
 // 4. Every prompt template keeps the placeholders the critique skill and the critic fill.
-// 5. The example config is valid, and the schema parses.
-// 6. The tests in test/ pass. They use synthetic files and fake programs only.
-// 7. The private name check passes on HEAD and its whole history. Skipped is a failure here.
+// 5. The docs, skills, prompts, AGENTS.md and .github/ name no internal ticket, tool or command
+//    (lib/docs-check.mjs).
+// 6. The example config is valid, and the schema parses.
+// 7. The tests in test/ pass. They use synthetic files and fake programs only.
+// 8. The private name check passes on HEAD and its whole history. Skipped is a failure here.
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validate } from '../lib/config.mjs';
+import { docsProblems } from '../lib/docs-check.mjs';
 import { scan } from '../lib/private-scan.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const problems = [];
-// --no-tests skips step 6 while iterating. The PR check and the final local run never pass it.
+// --no-tests skips step 7 while iterating. The PR check and the final local run never pass it.
 const skipTests = process.argv.includes('--no-tests');
 
 for (const file of ['LICENSE', 'AGENTS.md', 'README.md']) if (!existsSync(join(root, file))) problems.push(`${file}: missing`);
@@ -59,12 +62,15 @@ for (const name of existsSync(skills) ? readdirSync(skills) : []) {
 }
 
 const prompts = join(root, 'prompts');
+for (const name of ['critic.md', 'critic-same.md']) if (!existsSync(join(prompts, name))) problems.push(`prompts/${name}: missing`);
 for (const name of existsSync(prompts) ? readdirSync(prompts).filter((f) => f.startsWith('critic')) : []) {
   const text = readFileSync(join(prompts, name), 'utf8');
-  for (const p of ['{TICKET}', '{ROUND}', '{SUBJECT}', '{SUBJECT_SHORT}', '{DATE}', '{ROUND_NOTE}', '{REVIEWER}', '{MODEL}', '{WORKFLOW}', '{BODY}']) {
+  for (const p of ['{TICKET}', '{ROUND}', '{SUBJECT}', '{SUBJECT_SHORT}', '{DATE}', '{ROUND_NOTE}', '{REVIEWER}', '{MODEL}', '{WORKFLOW}', '{BODY}', '{ISSUE}', '{INSTRUCTION}']) {
     if (!text.includes(p)) problems.push(`prompts/${name}: missing ${p}`);
   }
 }
+
+problems.push(...docsProblems(root));
 
 try {
   for (const p of validate(JSON.parse(readFileSync(join(root, 'examples', 'config.example.json'), 'utf8')))) problems.push(`examples/config.example.json: ${p}`);

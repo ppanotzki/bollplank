@@ -9,10 +9,12 @@ import { sandbox, fakesSkip, bin } from './helpers.mjs';
 // The same fakes as test/init.test.mjs.
 // What a Linear tool returns for the synthetic workspace. FAKE_STATUSES replaces the status list,
 // FAKE_PROJECTS the project list, and FAKE_REPLY_STATUSES the statuses the model claims in its reply.
+// FAKE_GLOBEX_STATUSES adds the team GLOBEX with those statuses and the project Portal.
 const TEAMS = `
 const statuses = (process.env.FAKE_STATUSES || 'Backlog,Draft,Ready,In Progress,Acceptance,Done').split(',');
-const TEAMS_TEXT = JSON.stringify({ teams: [{ id: 't1', key: 'ACME', name: 'Acme', states: statuses.map((name) => ({ name })), projects: (process.env.FAKE_PROJECTS || 'Shop,Widgets').split(',').map((name) => ({ name })) }] });
-const REPLY = JSON.stringify({ teams: [{ key: 'ACME', name: process.env.FAKE_REPLY_NAME || 'Acme', statuses: process.env.FAKE_REPLY_STATUSES ? process.env.FAKE_REPLY_STATUSES.split(',') : process.env.FAKE_REPLY_LOWER ? statuses.map((s) => s.toLowerCase()) : statuses, projects: ['Shop', 'Widgets'] }, { key: 'GLOBEX', name: 'Globex', statuses: ['Todo'], projects: [] }] });
+const globex = process.env.FAKE_GLOBEX_STATUSES ? process.env.FAKE_GLOBEX_STATUSES.split(',') : null;
+const TEAMS_TEXT = JSON.stringify({ teams: [{ id: 't1', key: 'ACME', name: 'Acme', states: statuses.map((name) => ({ name })), projects: (process.env.FAKE_PROJECTS || 'Shop,Widgets').split(',').map((name) => ({ name })) }, ...(globex ? [{ id: 't2', key: 'GLOBEX', name: 'Globex', states: globex.map((name) => ({ name })), projects: [{ name: 'Portal' }] }] : [])] });
+const REPLY = JSON.stringify({ teams: [{ key: 'ACME', name: process.env.FAKE_REPLY_NAME || 'Acme', statuses: process.env.FAKE_REPLY_STATUSES ? process.env.FAKE_REPLY_STATUSES.split(',') : process.env.FAKE_REPLY_LOWER ? statuses.map((s) => s.toLowerCase()) : statuses, projects: ['Shop', 'Widgets'] }, { key: 'GLOBEX', name: 'Globex', statuses: globex ?? ['Todo'], projects: globex ? ['Portal'] : [] }] });
 `;
 
 // FAKE_LINEAR: none (no Linear tool), real (a real tool call), claimed (a reply with no call),
@@ -156,7 +158,13 @@ function box(t, { clients = ['claude', 'codex'], linear = 'real', onPath = true 
     assert.equal(r.status, 0, r.stdout);
   };
   const doctor = (args = ['--json'], extra) => run(['doctor', ...args], extra);
-  return { s, run, install, doctor };
+  // A project with no board of its own, so it falls back to the top level team and statuses.
+  const fallBack = () => {
+    const file = join(s.bollplank, 'config.json');
+    const config = JSON.parse(readFileSync(file, 'utf8'));
+    writeFileSync(file, JSON.stringify({ ...config, projects: { 'acme-shop': { source: s.root, tickets: join(s.root, 'tickets'), repos: { 'acme-api': { github: 'acme/acme-api', checks: ['checks'] } } } } }));
+  };
+  return { s, run, install, doctor, fallBack };
 }
 
 const byId = (r) => Object.fromEntries(r.json.checks.map((c) => [c.id, c]));
@@ -197,6 +205,7 @@ test('doctor runs a Linear read and a critic dry run per configured critic when 
 test('doctor fails a missing board status and a client that cannot read Linear, each with a fix', { skip: fakesSkip }, (t) => {
   const b = box(t);
   b.install();
+  b.fallBack();
   // Both clients read Linear and see every name in the config.
   let c = byId(b.doctor());
   for (const id of ['board.team.ACME', 'board.project.ACME.Shop', 'board.status.ACME.draft', 'board.status.ACME.acceptance', 'board.status.ACME.done']) assert.equal(c[id]?.ok, true, id);
@@ -235,6 +244,68 @@ test('doctor fails a missing board status and a client that cannot read Linear, 
   assert.equal(c['board.status.GLOBEX.done'], undefined);
 });
 
+test('doctor checks each project against its own team and statuses, and names the key to fix', { skip: fakesSkip }, (t) => {
+  const b = box(t);
+  b.install();
+  const file = join(b.s.bollplank, 'config.json');
+  const config = JSON.parse(readFileSync(file, 'utf8'));
+  const project = (board) => ({ source: b.s.root, tickets: join(b.s.root, 'tickets'), repos: { 'acme-api': { github: 'acme/acme-api', checks: ['checks'] } }, board });
+  // acme-shop uses the board's team and statuses. globex-portal has its own team and mapping, and
+  // takes the board's name for done.
+  writeFileSync(file, JSON.stringify({ ...config, projects: { 'acme-shop': project({ project: 'Shop' }), 'globex-portal': project({ team: 'GLOBEX', project: 'Portal', statuses: { draft: 'Backlog', ready: 'Todo', acceptance: 'In Review' } }) } }));
+  const globex = 'Backlog,Todo,In Progress,In Review,Done,Canceled';
+  let r = b.doctor(['--json'], { FAKE_GLOBEX_STATUSES: globex });
+  assert.equal(r.status, 0, r.stdout);
+  let c = byId(r);
+  for (const id of ['board.team.ACME', 'board.project.ACME.Shop', 'board.status.ACME.acceptance', 'board.team.GLOBEX', 'board.project.GLOBEX.Portal', 'board.status.GLOBEX.acceptance', 'board.status.GLOBEX.ready', 'board.status.GLOBEX.done']) assert.equal(c[id]?.ok, true, id);
+  assert.equal(c['board.status.GLOBEX.acceptance'].detail, 'GLOBEX has the status "In Review"');
+  // GLOBEX loses In Review. The fix names the project's own key.
+  r = b.doctor(['--json'], { FAKE_GLOBEX_STATUSES: 'Backlog,Todo,In Progress,Done,Canceled' });
+  assert.equal(r.status, 1, r.stdout);
+  c = byId(r);
+  assert.equal(c['board.status.GLOBEX.acceptance'].ok, false);
+  assert.match(c['board.status.GLOBEX.acceptance'].fix, /Under Started, add a status named "In Review"\. Or set projects\.globex-portal\.board\.statuses\.acceptance in the config to a status that exists\.$/);
+  assert.equal(c['board.status.ACME.acceptance'].ok, true);
+  // GLOBEX has no Done. That name comes from the top level, but the top level board is ACME, whose
+  // Done is fine. So the fix names the project's own key, never the shared board.statuses.done.
+  r = b.doctor(['--json'], { FAKE_GLOBEX_STATUSES: 'Backlog,Todo,In Progress,In Review,Shipped' });
+  c = byId(r);
+  assert.equal(c['board.status.GLOBEX.done'].ok, false);
+  assert.match(c['board.status.GLOBEX.done'].fix, /Or set projects\.globex-portal\.board\.statuses\.done in the config/);
+  assert.doesNotMatch(c['board.status.GLOBEX.done'].fix, /Or set board\.statuses/);
+  assert.equal(c['board.status.ACME.done'].ok, true);
+  // A suggested name a new Linear team lacks says so.
+  r = b.doctor(['--json'], { FAKE_STATUSES: 'Backlog,Todo,In Progress,Done,Canceled', FAKE_GLOBEX_STATUSES: globex });
+  c = byId(r);
+  assert.match(c['board.status.ACME.acceptance'].fix, /A new Linear team has only Backlog, Todo, In Progress, Done, Canceled, so a status named "Acceptance" is added by hand\.$/);
+});
+
+test('the top level statuses are required only when a project falls back to one of them', { skip: fakesSkip }, (t) => {
+  const b = box(t);
+  b.install();
+  const file = join(b.s.bollplank, 'config.json');
+  const config = JSON.parse(readFileSync(file, 'utf8'));
+  const own = { draft: 'Draft', ready: 'Ready', inProgress: 'In Progress', acceptance: 'In Review', done: 'Done' };
+  const project = (board) => ({ source: b.s.root, tickets: join(b.s.root, 'tickets'), repos: { 'acme-api': { github: 'acme/acme-api', checks: ['checks'] } }, ...(board ? { board } : {}) });
+  const statuses = 'Backlog,Draft,Ready,In Progress,In Review,Done';
+  // No project at all, and then one that maps all five itself: a missing top level name warns.
+  for (const projects of [{}, { 'acme-shop': project({ statuses: own }) }]) {
+    writeFileSync(file, JSON.stringify({ ...config, projects }));
+    const r = b.doctor(['--json'], { FAKE_STATUSES: statuses });
+    assert.equal(r.status, 0, r.stdout);
+    const c = byId(r)['board.status.ACME.acceptance.Acceptance'] ?? byId(r)['board.status.ACME.acceptance'];
+    assert.equal(c.ok, false);
+    assert.equal(c.required, false);
+  }
+  // A project that falls back to even one top level name makes the whole mapping required.
+  writeFileSync(file, JSON.stringify({ ...config, projects: { 'acme-shop': project({ statuses: { ...own, done: undefined } }) } }));
+  const r = b.doctor(['--json'], { FAKE_STATUSES: statuses });
+  assert.equal(r.status, 1, r.stdout);
+  const c = byId(r)['board.status.ACME.acceptance.Acceptance'];
+  assert.equal(c.ok, false);
+  assert.equal(c.required, true);
+});
+
 test('doctor compares the board names exactly and names Linear\'s spelling when only the case differs', { skip: fakesSkip }, (t) => {
   const b = box(t);
   b.install();
@@ -265,6 +336,7 @@ test('doctor compares the board names exactly and names Linear\'s spelling when 
 test('doctor goes by the tool\'s spelling even when the model writes a status in another case', { skip: fakesSkip }, (t) => {
   const b = box(t);
   b.install();
+  b.fallBack();
   const file = join(b.s.bollplank, 'config.json');
   const config = JSON.parse(readFileSync(file, 'utf8'));
   writeFileSync(file, JSON.stringify({ ...config, board: { ...config.board, statuses: { ...config.board.statuses, acceptance: 'acceptance' } } }));
@@ -418,4 +490,35 @@ test('a corrupt install record fails the links check with the file named, never 
   const init = b.run(['init', '--answers', file, '--offline', '--json']);
   assert.equal(init.json.failure, 'corrupt');
   assert.equal(readFileSync(join(b.s.bollplank, 'install.json'), 'utf8'), '{"links": [');
+});
+
+test('a client found only in its app bundle warns with the PATH line', async () => {
+  const { clientPathCheck } = await import('../lib/commands/doctor.mjs');
+  const c = { name: 'codex', label: 'Codex', bin: '/Applications/Acme.app/Contents/Resources/codex-cli/bin/codex' };
+  const off = clientPathCheck(c, null, '/bin/zsh');
+  assert.equal(off.ok, false);
+  assert.equal(off.required, false);
+  assert.match(off.detail, /`codex` is not on PATH/);
+  assert.match(off.fix, /~\/\.zshrc.*export PATH="\/Applications\/Acme\.app\/Contents\/Resources\/codex-cli\/bin:\$PATH"/);
+  const on = clientPathCheck(c, '/usr/local/bin/codex');
+  assert.equal(on.ok, true);
+  assert.equal(on.fix, null);
+  // fish has its own command, and bash on macOS reads ~/.bash_profile.
+  assert.equal(clientPathCheck(c, null, '/opt/acme/bin/fish', 'darwin').fix, 'Run this once in fish, then open a new terminal: fish_add_path /Applications/Acme.app/Contents/Resources/codex-cli/bin');
+  assert.match(clientPathCheck(c, null, '/bin/bash', 'darwin').fix, /^Add this line to ~\/\.bash_profile /);
+  assert.match(clientPathCheck(c, null, '/bin/bash', 'linux').fix, /^Add this line to ~\/\.bashrc /);
+});
+
+test('PATH holds a command only as an executable file, never a folder or a file that cannot run', { skip: fakesSkip }, async (t) => {
+  const { findOnPath } = await import('../lib/commands/doctor.mjs');
+  const s = sandbox();
+  t.after(s.clean);
+  const dirs = ['a', 'b', 'c'].map((n) => join(s.root, n));
+  for (const d of dirs) mkdirSync(d);
+  mkdirSync(join(dirs[0], 'acme-tool'));
+  writeFileSync(join(dirs[1], 'acme-tool'), 'not a program\n', { mode: 0o644 });
+  writeFileSync(join(dirs[2], 'acme-tool'), '#!/bin/sh\n', { mode: 0o755 });
+  const env = { PATH: dirs.join(':') };
+  assert.equal(findOnPath('acme-tool', env, 'darwin'), join(dirs[2], 'acme-tool'));
+  assert.equal(findOnPath('acme-tool', { PATH: dirs.slice(0, 2).join(':') }, 'darwin'), null);
 });

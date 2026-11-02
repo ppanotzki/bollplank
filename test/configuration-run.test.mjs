@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { configurationRun } from '../lib/configuration-run.mjs';
+import { loadProject, withDefaults } from '../lib/config.mjs';
 import { sandbox } from './helpers.mjs';
 
 function fixture(t) {
@@ -151,6 +152,30 @@ test('changed brief, profile or review evidence blocks further changes', (t) => 
   const r = f.run('show').record;
   writeFileSync(r.brief.path, 'changed baseline');
   assert.throws(() => f.run('complete'), /brief evidence/);
+});
+
+test('the profile hash changes only with the project\'s own entry, never with the top level statuses', (t) => {
+  const f = fixture(t);
+  const written = structuredClone(f.profile);
+  const config = (statuses) => withDefaults({ approver: { name: 'Ada' }, board: { kind: 'linear', team: 'ACME', statuses }, projects: { 'acme-ops': structuredClone(written), 'acme-shop': { source: '/s', tickets: '/t', repos: {} } } });
+  const profileOf = (c) => {
+    const { name, ...profile } = loadProject(c, 'acme-ops');
+    return profile;
+  };
+  const run = (profile, cmd, opts = {}, positional = []) => configurationRun({ project: 'acme-ops', ticket: 'ACME-1', profile, cmd, opts, positional, approver: 'Ada' });
+  const before = profileOf(config({ ready: 'Ready' }));
+  assert.equal(before.board.statuses.ready, 'Ready');
+  // The project as 0.1.0 read it: the same defaults, with the board as the file wrote it.
+  const old = { ...JSON.parse(JSON.stringify(before)), board: written.board };
+  const started = run(old, 'init', { brief: f.brief, approval: 'synthetic', instruction: 'synthetic run', review: 'plan', 'board-readback': f.live }).record;
+  // A run started without the defaulted statuses goes on with them, and with other top level names.
+  assert.equal(run(before, 'plan', { path: f.plan }).record.profileHash, started.profileHash);
+  const after = profileOf(config({ ready: 'Todo', acceptance: 'In Review' }));
+  assert.equal(after.board.statuses.ready, 'Todo');
+  assert.equal(run(after, 'plan', { path: f.plan }).record.profileHash, started.profileHash);
+  // The project's own statuses are part of its entry, so changing them still stops the run.
+  written.board.statuses = { ready: 'Queued' };
+  assert.throws(() => run(profileOf(config({ ready: 'Todo' })), 'plan', { path: f.plan }), /profile changed during run/);
 });
 
 test('initial baseline matches fresh board content while approval references have no format gate', (t) => {
