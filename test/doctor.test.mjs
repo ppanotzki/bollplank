@@ -448,6 +448,18 @@ test('doctor names a key sign in, a moved link and a held ship lock', { skip: fa
   assert.match(c.lock.detail, /held by ACME-7, session acme-session, for 3 minutes/);
 });
 
+test('a signed out client is named once, with one fix, and Linear asks for the sign in first', { skip: fakesSkip }, (t) => {
+  const b = box(t);
+  b.install();
+  const r = b.doctor(['--json'], { FAKE_CLAUDE_AUTH: 'out', FAKE_LINEAR: 'connector' });
+  assert.equal(r.status, 1);
+  const c = byId(r);
+  assert.equal(c['signin.claude'].detail, 'Claude Code is not signed in.');
+  assert.equal(c['signin.claude'].fix, 'Run `claude auth login` and sign in with your Claude subscription.');
+  assert.equal(c['linear.claude'].detail, 'not read, since Claude Code is not signed in with a subscription');
+  assert.match(c.linear.fix, /^Sign in to each client first/);
+});
+
 test('doctor checks every kit skill in each client found, not only the recorded links', { skip: fakesSkip }, (t) => {
   const b = box(t);
   b.install();

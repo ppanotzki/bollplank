@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1 (2026-11-03)
+
+Fixes from a fresh setup on an empty home.
+
+- A client that is not signed in is named once, with one fix, in init and doctor. "Bollplank will not use it this way" is said only for a sign in that is not a subscription.
+- Doctor's Linear check asks you to sign in to each client first when one is signed out, instead of sending you to init.
+- Init names only the suggested statuses the team really lacks, and says nothing when it has them all. The steps to add a status are shown once, not again after each read.
+- The getting started guide says that the clone needs access to the repo while it is private, and git signed in to GitHub.
+
 ## 0.2.0 (2026-11-02)
 
 - The critic works the board itself. It reads the issue and its comments with its own client's Linear tools and posts its critique as one comment. A round counts only when it read the issue and its comments, otherwise the call fails with `board-unreachable` and the session is kept for a retry. A client with no Linear server fails with `critic-unavailable` before any model turn. `posted` says whether the comment was saved.
