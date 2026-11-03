@@ -804,6 +804,9 @@ test('a missing status is never created: init shows the steps and checks again o
   assert.match(text(r), /"Acceptance" is not a status of ACME in Linear\. Bollplank never creates one on its own/);
   assert.match(text(r), /Settings, then Teams, then ACME, then Workflow\. Under Started, add a status named "Acceptance"/);
   assert.match(text(r), /Still no status named "Acceptance"/);
+  // The steps are shown once, not again after each read.
+  assert.equal(text(r).split('is not a status of ACME').length, 2);
+  assert.match(text(r), /ACME lacks Acceptance, so add those/);
   assert.match(text(r), /Kept "Acceptance"\. `bollplank doctor` fails until a status named "Acceptance" exists in ACME/);
   assert.equal(r.json.doctor.checks.find((c) => c.id === 'board.status.ACME.acceptance').ok, false);
   const probes = b.calls().filter((c) => c.args[0] === '-p' && c.prompt).length;
@@ -836,7 +839,9 @@ test('a project in another team maps its own statuses, which init explains, and 
   const said = text(r);
   assert.match(said, /The statuses of GLOBEX in Linear: Backlog, Todo, In Progress, In Review, Done, Canceled\./);
   assert.match(said, /acceptance: a shipped ticket waiting for your acceptance test\./);
-  assert.match(said, /A new Linear team has Backlog, Todo, In Progress, Done, Canceled\. It lacks Draft, Ready, Acceptance/);
+  assert.match(said, /GLOBEX lacks Draft, Ready, Acceptance, so add those in Linear's settings/);
+  // The board's team has every suggested status, so its step gives no advice.
+  assert.doesNotMatch(said, /ACME lacks|A new Linear team has/);
   // The answers name no mapping, so own is the default, since the team differs from step 3's.
   assert.match(said, /Linear team GLOBEX, project Portal, with its own statuses\./);
   // Doctor checks each against its own team.
