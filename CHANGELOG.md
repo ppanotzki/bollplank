@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.2 (2026-11-04)
+
+- The getting started guide adds Draft, Ready and Acceptance in section 1, together with the Inbox rename, while you are already in the team's Workflow settings. Init then finds all five statuses.
+
 ## 0.3.1 (2026-11-04)
 
 - The getting started guide renames a new team's Backlog status to Inbox, where ideas wait until one gets a brief.
