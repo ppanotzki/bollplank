@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.5 (2026-11-04)
+
+- The repository is public, so the getting started guide no longer asks for an invite or a GitHub sign in before the clone.
+
 ## 0.3.4 (2026-11-04)
 
 - Doctor also tries Claude Code's Linear read once more when `claude mcp list` does not list the Linear server, since its health check can miss a server for a moment.

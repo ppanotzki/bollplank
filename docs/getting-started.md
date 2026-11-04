@@ -8,7 +8,6 @@ You use Terminal twice, to make a folder and to install. Everything else happens
 
 - Node 20 or later and git. `xcode-select --install` gives you git.
 - Claude Code and Codex, each signed in with a subscription: `claude auth login` with a Claude account, `codex login` with ChatGPT. With only one of them, the critic is the same model in a separate session (see [same-model.md](same-model.md)).
-- While the Bollplank repo is private, an invite to it, and git signed in to GitHub. When the GitHub CLI is signed in, `gh auth setup-git` does that. Otherwise run `brew install gh`, then `gh auth login`. Without them the clone in section 3 fails with `could not read Username`.
 - Codex may be only inside the ChatGPT app, with no `codex` command in your terminal. Bollplank finds it there. Doctor's `path.codex` warning then gives the line that puts it on your `PATH`.
 
 ## 1. A Linear team
