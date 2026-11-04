@@ -42,6 +42,11 @@ if (args[0] === 'auth') {
 if (args[0] === 'mcp') {
   if (args[1] === 'list') {
     console.log('Checking MCP server health...\\n');
+    // FAKE_FLAKY_LIST: the first n lists miss the Linear server, as a slow health check can.
+    const counter = path.join(state, 'flaky-LIST');
+    const seen = fs.existsSync(counter) ? Number(fs.readFileSync(counter, 'utf8')) : 0;
+    fs.writeFileSync(counter, String(seen + 1));
+    if (seen < Number(process.env.FAKE_FLAKY_LIST || 0)) { console.log('acme-files: npx acme-files - ✓ Connected'); process.exit(0); }
     if (linear === 'added') console.log('linear: ' + 'https://mcp.linear.app/mcp (HTTP) - ✓ Connected');
     else if (linear !== 'none') console.log('claude.ai Linear: https://mcp.linear.app/mcp - ✓ Connected');
     console.log('acme-files: npx acme-files - ✓ Connected');
@@ -582,7 +587,7 @@ test('doctor tries a failed Linear read or test critique once more, and only onc
   b.install();
   const calls = () => readFileSync(join(b.s.root, 'state', 'calls.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((c) => c.tool === 'codex' && c.prompt !== undefined);
   const fresh = () => {
-    for (const f of ['calls.jsonl', 'flaky-PROBE', 'flaky-CRITIC']) rmSync(join(b.s.root, 'state', f), { force: true });
+    for (const f of ['calls.jsonl', 'flaky-PROBE', 'flaky-CRITIC', 'flaky-LIST']) rmSync(join(b.s.root, 'state', f), { force: true });
   };
   // Each fails once, then passes, and says so.
   fresh();
@@ -601,6 +606,18 @@ test('doctor tries a failed Linear read or test critique once more, and only onc
   assert.match(c['linear.codex'].detail, / It failed on both tries\.$/);
   assert.match(c['critic.codex'].detail, /^Codex failed: client-error\. workspace routing discovery failed\. It failed on both tries\.$/);
   assert.equal(calls().length, 4);
+  // A Claude Code list that misses the Linear server once is listed again, and the read passes.
+  fresh();
+  r = b.doctor(['--json'], { FAKE_FLAKY_LIST: '1' });
+  assert.equal(r.status, 0, r.stdout);
+  c = byId(r);
+  assert.match(c['linear.claude'].detail, /^Claude Code read 1 Linear team through .*, on the second try\.$/);
+  // Missing twice, it fails with the fix that adds the Linear MCP.
+  fresh();
+  r = b.doctor(['--json'], { FAKE_FLAKY_LIST: '2' });
+  c = byId(r);
+  assert.equal(c['linear.claude'].detail, 'Claude Code lists no Linear MCP server or connector in `claude mcp list`. It failed on both tries.');
+  assert.match(c['linear.claude'].fix, /claude mcp add/);
   // The person sees the second try on stderr.
   fresh();
   r = b.doctor([], { FAKE_FLAKY_CRITIC: '1' });
