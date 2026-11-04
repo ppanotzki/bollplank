@@ -108,6 +108,8 @@ With an answers file, init never waits for Enter. So `missingProject` set to `se
 | `critic.<client>`, `critic.<client>.same` | One dry run per critic the config uses, with no board tools. |
 | `lock` | The ship lock is free or has a readable holder. |
 
+A Linear read or a dry run that fails in a way a second try can fix runs once more, since a client or its service can fail for a moment. Its check then says it passed on the second try or failed on both. A read that called a tool other than a Linear read, or a critic that used a tool, is not tried again.
+
 It exits 1 when a required check fails. `--offline` skips the Linear reads, the board checks and the dry runs. `--json` prints every check.
 
 ## `bollplank update`

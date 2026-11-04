@@ -1,1 +1,1 @@
-{ "name": "bollplank", "version": "0.3.2", "private": true, "type": "module", "engines": { "node": ">=20" }, "bin": { "bollplank": "bin/bollplank" } }
+{ "name": "bollplank", "version": "0.3.3", "private": true, "type": "module", "engines": { "node": ">=20" }, "bin": { "bollplank": "bin/bollplank" } }

@@ -2,9 +2,12 @@
 // No test runs a real client or makes a model call.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { sandbox, fakesSkip, bin } from './helpers.mjs';
+import * as claudeProvider from '../lib/providers/claude.mjs';
+import * as codexProvider from '../lib/providers/codex.mjs';
+import { secondTry } from '../lib/commands/doctor.mjs';
 
 // The same fakes as test/init.test.mjs.
 // What a Linear tool returns for the synthetic workspace. FAKE_STATUSES replaces the status list,
@@ -65,6 +68,14 @@ if (args.includes('--input-format')) {
     log({ prompt: input });
     const server = linear === 'added' ? 'linear' : 'claude_ai_Linear';
     emit({ type: 'system', subtype: 'init' });
+    // FAKE_HANG: a Linear write (write) or a good read (read), then the probe never ends.
+    if (process.env.FAKE_HANG) {
+      const tool = 'mcp__' + server + '__' + (process.env.FAKE_HANG === 'write' ? 'save_issue' : 'list_teams');
+      emit({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'toolu_9', name: tool, input: {} }] } });
+      emit({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_9', is_error: false, content: [{ type: 'text', text: TEAMS_TEXT }] }] } });
+      setInterval(() => {}, 1000);
+      return;
+    }
     if (linear === 'real' || linear === 'added' || linear === 'error') {
       emit({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'toolu_1', name: 'mcp__' + server + '__list_teams', input: {} }] } });
       const tool = 'mcp__' + server + '__list_teams';
@@ -118,6 +129,27 @@ process.stdin.on('end', () => {
   const emit = (e) => process.stdout.write(JSON.stringify(e) + '\\n');
   emit({ type: 'thread.started', thread_id: 'thread-acme' });
   emit({ type: 'turn.started' });
+  // FAKE_FLAKY_PROBE and FAKE_FLAKY_CRITIC: the first n Linear probes or critiques fail the way
+  // Codex's service did for a moment, counted in the state folder.
+  const kind = input.includes('Bollplank setup check') ? 'PROBE' : 'CRITIC';
+  const flaky = Number(process.env['FAKE_FLAKY_' + kind] || 0);
+  const counter = path.join(state, 'flaky-' + kind);
+  const seen = fs.existsSync(counter) ? Number(fs.readFileSync(counter, 'utf8')) : 0;
+  fs.writeFileSync(counter, String(seen + 1));
+  if (seen < flaky) {
+    emit({ type: 'error', message: 'workspace routing discovery failed' });
+    emit({ type: 'turn.failed', error: { message: 'workspace routing discovery failed' } });
+    process.exit(1);
+  }
+  // FAKE_HANG: a Slack write (write) or a good Linear read (read), then the probe never ends.
+  if (process.env.FAKE_HANG && kind === 'PROBE') {
+    const write = process.env.FAKE_HANG === 'write';
+    const item = write ? { id: 'item_9', type: 'mcp_tool_call', server: 'acme_slack', tool: 'send_message', arguments: {} } : { id: 'item_9', type: 'mcp_tool_call', server: 'linear', tool: 'list_teams', arguments: {} };
+    emit({ type: 'item.started', item: { ...item, status: 'in_progress' } });
+    emit({ type: 'item.completed', item: { ...item, result: { content: [{ type: 'text', text: TEAMS_TEXT }] }, error: null, status: 'completed' } });
+    setInterval(() => {}, 1000);
+    return;
+  }
   if (!input.includes('Bollplank setup check')) {
     const text = process.env.FAKE_CRITIC === 'malformed' ? 'Looks fine to me.' : 'Critique of ACME-0 health check v1\\nVerdict: Approve\\nNo material points.';
     emit({ type: 'item.completed', item: { id: 'item_0', type: 'agent_message', text } });
@@ -543,4 +575,67 @@ test('doctor says before its slow checks that they take a few minutes, and names
   assert.match(r.stderr, /Reading Linear from Claude Code\.\.\./);
   assert.match(r.stderr, /Running a test critique with Codex\.\.\./);
   assert.equal(r.stdout.includes('Reading Linear from'), false);
+});
+
+test('doctor tries a failed Linear read or test critique once more, and only once', { skip: fakesSkip }, (t) => {
+  const b = box(t);
+  b.install();
+  const calls = () => readFileSync(join(b.s.root, 'state', 'calls.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((c) => c.tool === 'codex' && c.prompt !== undefined);
+  const fresh = () => {
+    for (const f of ['calls.jsonl', 'flaky-PROBE', 'flaky-CRITIC']) rmSync(join(b.s.root, 'state', f), { force: true });
+  };
+  // Each fails once, then passes, and says so.
+  fresh();
+  let r = b.doctor(['--json'], { FAKE_FLAKY_PROBE: '1', FAKE_FLAKY_CRITIC: '1' });
+  assert.equal(r.status, 0, r.stdout);
+  let c = byId(r);
+  assert.match(c['linear.codex'].detail, /^Codex read 1 Linear team through .*, on the second try\.$/);
+  assert.equal(c['critic.codex'].detail, 'Codex answered in the critique format, on the second try');
+  assert.equal(c['linear.claude'].detail.includes('second try'), false);
+  assert.equal(calls().length, 4);
+  // Each fails twice, so it fails after one more try, and says so.
+  fresh();
+  r = b.doctor(['--json'], { FAKE_FLAKY_PROBE: '2', FAKE_FLAKY_CRITIC: '2' });
+  assert.equal(r.status, 1, r.stdout);
+  c = byId(r);
+  assert.match(c['linear.codex'].detail, / It failed on both tries\.$/);
+  assert.match(c['critic.codex'].detail, /^Codex failed: client-error\. workspace routing discovery failed\. It failed on both tries\.$/);
+  assert.equal(calls().length, 4);
+  // The person sees the second try on stderr.
+  fresh();
+  r = b.doctor([], { FAKE_FLAKY_CRITIC: '1' });
+  assert.match(r.stderr, /The test critique with Codex failed\. Trying once more\.\.\./);
+  // A probe that called a tool that is not a Linear read is never tried again.
+  fresh();
+  r = b.doctor(['--json'], { FAKE_LINEAR_CODEX: 'slack' });
+  c = byId(r);
+  assert.equal(c['linear.codex'].ok, false);
+  assert.match(c['linear.codex'].detail, /not a Linear read/);
+  assert.equal(calls().filter((x) => x.prompt.includes('Bollplank setup check')).length, 1);
+});
+
+test('a probe that made a call that is not a Linear read and then ran out of time is never tried again', { skip: fakesSkip }, async (t) => {
+  const b = box(t);
+  b.install();
+  const env = { ...b.s.env, FAKE_STATE: join(b.s.root, 'state'), FAKE_LINEAR: 'real' };
+  const cwd = join(b.s.root, 'neutral');
+  for (const [label, provider] of [['Claude Code', claudeProvider], ['Codex', codexProvider]]) {
+    const bin = join(b.s.fakes, provider === claudeProvider ? 'claude' : 'codex');
+    const probe = (hang) => provider.probeLinear({ bin, env: { ...env, FAKE_HANG: hang }, cwd, timeoutMs: 3000 });
+    // A forbidden call before the timeout fails for good, and its tool is named.
+    const write = probe('write');
+    assert.equal(write.ok, false, label);
+    assert.notEqual(write.retry, true, label);
+    assert.match(write.detail, /not a Linear read/, label);
+    // A second try that would pass is never made after it.
+    let n = 0;
+    const r = await secondTry(() => (n++ === 0 ? write : { ok: true, detail: 'read' }), (x) => x.ok, (x) => x.retry === true, label);
+    assert.equal(r.ok, false, label);
+    assert.equal(n, 1, label);
+    // Only Linear reads before the timeout may be tried again.
+    const read = probe('read');
+    assert.equal(read.ok, false, label);
+    assert.equal(read.retry, true, label);
+    assert.match(read.detail, new RegExp(`^${label} did not finish the Linear probe in 3 seconds\\.$`), label);
+  }
 });
