@@ -14,7 +14,7 @@ Rules:
 - A point is material when it changes behaviour, data or permissions, or catches a real bug or contradiction. Leave out style and process preferences.
 - No process items: do not ask for more rounds, reviews, sign offs or documentation of the process.
 - The ticket's settled decisions are not reopened. Problems with how they are carried out are welcome.
-- With no material point left, the verdict is Approve.
+- With no material point left, the verdict is Approve. Below the header, say in one or two sentences what you checked.
 
 Post the critique as one comment on {ISSUE} with your Linear tool. Then reply with exactly the text you posted, with nothing before or after it. Change nothing else on the board unless the approver's instruction above asks for it. Never post a secret, a key or the contents of a file beyond the short quote a point needs. Do not create, edit or delete any file. Do not run commands that change anything.
 

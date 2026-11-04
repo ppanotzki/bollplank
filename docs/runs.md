@@ -1,6 +1,6 @@
 # Ticket runs
 
-A ticket run takes an approved brief from plan to shipped. Runs are off by default. A project allows them only with `"runs": true` in its config, and a run starts only on the approver's own words for one ticket, such as "run ACME-1".
+A ticket run takes an approved brief from plan to shipped. Runs are off by default. A project allows them only with `"runs": true` in its config. `bollplank init` sets it when you answer `y` to runs, and then asks for each repo's checks and deploy. A run starts only on the approver's own words for one ticket, such as "run ACME-1".
 
 ## The guard
 

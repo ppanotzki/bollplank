@@ -24,7 +24,7 @@ if (process.env.FAKE_LATE_PROJECT && ['-p', 'exec'].includes(args[0])) {
   turns = (fs.existsSync(f) ? Number(fs.readFileSync(f, 'utf8')) : 0) + 1;
   fs.writeFileSync(f, String(turns));
 }
-const acmeProjects = ['Shop', 'Widgets', ...(turns >= 2 ? [process.env.FAKE_LATE_PROJECT] : [])];
+const acmeProjects = process.env.FAKE_NO_PROJECTS ? [] : ['Shop', 'Widgets', ...(turns >= 2 ? [process.env.FAKE_LATE_PROJECT] : [])];
 const TEAMS_TEXT = JSON.stringify({ teams: [{ id: 't1', key: 'ACME', name: 'Acme', states: statuses.map((name) => ({ name })), projects: acmeProjects.map((name) => ({ name })) }, ...(globex ? [{ id: 't2', key: 'GLOBEX', name: 'Globex', states: globex.map((name) => ({ name })), projects: [{ name: 'Portal' }] }] : [])] });
 const REPLY = JSON.stringify({ teams: [{ key: 'ACME', name: 'Acme', statuses, projects: acmeProjects }, { key: 'GLOBEX', name: 'Globex', statuses: globex ?? ['Todo'], projects: globex ? ['Portal'] : [] }] });
 `;
@@ -552,7 +552,10 @@ test('init with answers writes a valid config and links every skill for each cli
   assert.deepEqual(p.board, { team: 'ACME', project: 'Shop' });
   assert.equal(p.runs, false);
   assert.deepEqual(p.shipOrder, ['acme-api']);
-  assert.deepEqual(p.repos['acme-api'], { github: 'acme/acme-api', checks: ['checks', 'lint'], baseBranch: 'trunk', deploy: { kind: 'none' } });
+  // Runs are off, so init asks for no checks and no deploy.
+  assert.deepEqual(p.repos['acme-api'], { github: 'acme/acme-api', baseBranch: 'trunk' });
+  assert.match(text(r), /Runs are off, so init does not ask for checks or a deploy/);
+  assert.equal(c.copyStyle, 'Plain sentences. No em or en dashes. No semicolons. No filler.');
   const skills = readdirSync(join(kit, 'skills')).filter((n) => n.startsWith('bollplank-'));
   assert.ok(skills.length >= 8);
   for (const dir of [b.s.claude, b.s.codex]) {
@@ -801,12 +804,13 @@ test('a missing status is never created: init shows the steps and checks again o
   const b = box(t);
   const r = b.init(withSource(b, { recheck: { acceptance: true } }), ['--json'], { FAKE_STATUSES: 'Draft,Ready,In Progress,Done' });
   assert.equal(r.status, 0, r.stdout);
-  assert.match(text(r), /"Acceptance" is not a status of ACME in Linear\. Bollplank never creates one on its own/);
-  assert.match(text(r), /Settings, then Teams, then ACME, then Workflow\. Under Started, add a status named "Acceptance"/);
+  // The steps come once, before the questions, with the team's name as Linear's settings show it.
+  assert.match(text(r), /ACME lacks Acceptance\. Add it now, or map its state to a status the team has\./);
+  assert.match(text(r), /To add it: Open Linear, go to Settings, then Teams, then Acme, then Workflow\. Add "Acceptance" under Started\./);
+  assert.match(text(r), /"Acceptance" is not a status of ACME in Linear yet\. Add it as above, then check again\./);
   assert.match(text(r), /Still no status named "Acceptance"/);
   // The steps are shown once, not again after each read.
   assert.equal(text(r).split('is not a status of ACME').length, 2);
-  assert.match(text(r), /ACME lacks Acceptance, so add those/);
   assert.match(text(r), /Kept "Acceptance"\. `bollplank doctor` fails until a status named "Acceptance" exists in ACME/);
   assert.equal(r.json.doctor.checks.find((c) => c.id === 'board.status.ACME.acceptance').ok, false);
   const probes = b.calls().filter((c) => c.args[0] === '-p' && c.prompt).length;
@@ -839,7 +843,8 @@ test('a project in another team maps its own statuses, which init explains, and 
   const said = text(r);
   assert.match(said, /The statuses of GLOBEX in Linear: Backlog, Todo, In Progress, In Review, Done, Canceled\./);
   assert.match(said, /acceptance: a shipped ticket waiting for your acceptance test\./);
-  assert.match(said, /GLOBEX lacks Draft, Ready, Acceptance, so add those in Linear's settings/);
+  assert.match(said, /GLOBEX lacks Draft, Ready, Acceptance\. Add them now, or map their states to statuses the team has\./);
+  assert.match(said, /Add "Draft" under Backlog, "Ready" under Unstarted and "Acceptance" under Started\./);
   // The board's team has every suggested status, so its step gives no advice.
   assert.doesNotMatch(said, /ACME lacks|A new Linear team has/);
   // The answers name no mapping, so own is the default, since the team differs from step 3's.
@@ -869,9 +874,9 @@ test('a missing Linear project is never created by init: it offers the session s
   assert.equal(probes.filter((c) => c.tool === 'claude').length, 4);
   const said = b.s.run(['init', '--answers', join(b.s.root, 'answers-1.json')], b.env).stdout;
   assert.match(said, /Gadgets is not a project of ACME in Linear\. Bollplank never creates one on its own/);
-  assert.match(said, /In your Claude Code or Codex session, ask this:\n {2}Create the Linear project Gadgets in team ACME\n/);
+  assert.match(said, /Start a new Claude Code or Codex session, in any folder, and ask this:\n {2}Create the Linear project Gadgets in team ACME\n/);
   // No Bollplank skill is linked yet on a first install, so the person checks the call themselves.
-  assert.match(said, /Check that it names the team ACME and the project Gadgets before you approve it\./);
+  assert.match(said, /If the session asks you to allow the call, check that it names the team ACME and the project Gadgets\. Otherwise check that its reply names them\./);
   assert.match(said, /init reads Linear again\./);
   assert.doesNotMatch(said, /board skill/);
   assert.equal(said.match(/Still no project named Gadgets in ACME\./g).length, 3);
@@ -930,4 +935,18 @@ test('every client call init and doctor make is the read only probe or a critic 
       }
     }
   }
+});
+
+test('a team with no projects says a project is not the team, and a missing status shows the steps before the questions', { skip: fakesSkip }, (t) => {
+  const b = box(t);
+  const r = b.init(withSource(b, { team: 'ACME', project: '', addProject: false }), ['--json'], { FAKE_NO_PROJECTS: '1', FAKE_STATUSES: 'Backlog,Todo,In Progress,Done,Canceled' });
+  assert.equal(r.status, 0, r.stdout);
+  const said = text(r);
+  assert.match(said, /ACME has no Linear projects yet\. A project groups tickets inside the team\./);
+  const steps = said.indexOf('To add them: Open Linear, go to Settings, then Teams, then Acme, then Workflow. Add "Draft" under Backlog, "Ready" under Unstarted and "Acceptance" under Started.');
+  assert.ok(steps > 0, said);
+  // Each missing status then points back to the steps above instead of repeating them.
+  assert.match(said, /"Draft" is not a status of ACME in Linear yet\. Add it as above, then check again\./);
+  // Doctor's own fix lines in step 7 still give the steps per status.
+  assert.equal(said.split('Step 7 of 7')[0].includes('Under Backlog, add a status named'), false);
 });

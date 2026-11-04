@@ -477,3 +477,21 @@ test('merge checks its arguments', (t) => {
   assert.equal(s.run(['merge', 'acme-shop', 'acme-nope', '7']).status, 2);
   assert.equal(s.run(['merge', 'acme-shop', 'acme-api', '7', '--run']).status, 2);
 });
+
+test('a repo without checks is valid with runs off, and merge refuses it before any GitHub call', (t) => {
+  const s = sandbox();
+  t.after(s.clean);
+  const source = join(s.root, 'src');
+  mkdirSync(join(source, 'acme-api'), { recursive: true });
+  s.config(acmeConfig(source, join(s.root, 'tickets'), { 'acme-api': { github: 'acme/acme-api', baseBranch: 'main' } }, { runs: false }));
+  const r = s.run(['merge', 'acme-shop', 'acme-api', '7']);
+  assert.equal(r.status, 1, r.stdout);
+  assert.equal(r.json.failure, 'checks');
+  assert.equal(r.json.merged, false);
+  assert.match(r.json.detail, /acme-api has no checks configured/);
+  // With runs on the same config is invalid, since every merge needs checks.
+  s.config(acmeConfig(source, join(s.root, 'tickets'), { 'acme-api': { github: 'acme/acme-api', baseBranch: 'main' } }, { runs: true }));
+  const bad = s.run(['context', 'acme-shop']);
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.json.detail, /checks: at least one check name/);
+});

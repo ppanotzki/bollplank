@@ -669,6 +669,19 @@ test('a reported model that differs from the pinned one comes back as modelCorre
   }
 });
 
+test('with no pinned model, the model the client last reported fills the next Model line', { skip: fakesSkip }, (t) => {
+  const b = box();
+  after(t, b);
+  const first = b.call({ lead: 'claude', ticket: 'ACME-1' });
+  assert.equal(first.status, 0, first.stdout);
+  assert.ok(first.json.modelCorrection);
+  // The next call to the same critic posts the remembered model, so nothing needs correcting.
+  const next = b.call({ lead: 'claude', ticket: 'ACME-3' });
+  assert.equal(next.status, 0, next.stdout);
+  assert.equal(b.reviews().at(-1).prompt.split('\n').find((l) => l.startsWith('Model:')), 'Model: ' + first.json.model);
+  assert.equal(next.json.modelCorrection, undefined);
+});
+
 test('the shipped prompts carry every placeholder, have the critic post on the issue and forbid editing files', () => {
   for (const f of ['critic.md', 'critic-same.md']) {
     const text = readFileSync(new URL(`../prompts/${f}`, import.meta.url), 'utf8');

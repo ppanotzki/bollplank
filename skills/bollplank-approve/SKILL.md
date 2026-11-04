@@ -23,6 +23,6 @@ Only the approver approves, and only in so many words. Run `bollplank context <p
 
    <approver> approved brief v<N> in the <tool> session on <date> ("<their words>"). Cross-model review for this ticket is <value>. Critic is <value, or "the configured default">.
    ```
-5. **Update the header:** `Approval: Approved by <approver> on <date> (<link to the comment>)`, `Cross-model review: <value>. <reason>`, and the `Critic:` line when one was settled. Read the description back.
+5. **Update the header:** `Approval: Approved by <approver> on <date> ([approval comment](<comment url>))`, `Cross-model review: <value>. <reason>`, and the `Critic:` line when one was settled. Write the link as that markdown link, since a board can wrap a bare URL in link syntax of its own. Read the description back.
 6. **Move the issue to the ready status.**
 7. Plans need no approval. Starting work is a separate instruction from the approver ("run ACME-1", or a plain go ahead outside runs).
