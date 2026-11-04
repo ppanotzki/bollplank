@@ -2,7 +2,7 @@
 // No test runs a real client or makes a model call.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { sandbox, fakesSkip, bin } from './helpers.mjs';
 
@@ -118,6 +118,18 @@ process.stdin.on('end', () => {
   const emit = (e) => process.stdout.write(JSON.stringify(e) + '\\n');
   emit({ type: 'thread.started', thread_id: 'thread-acme' });
   emit({ type: 'turn.started' });
+  // FAKE_FLAKY_PROBE and FAKE_FLAKY_CRITIC: the first n Linear probes or critiques fail the way
+  // Codex's service did for a moment, counted in the state folder.
+  const kind = input.includes('Bollplank setup check') ? 'PROBE' : 'CRITIC';
+  const flaky = Number(process.env['FAKE_FLAKY_' + kind] || 0);
+  const counter = path.join(state, 'flaky-' + kind);
+  const seen = fs.existsSync(counter) ? Number(fs.readFileSync(counter, 'utf8')) : 0;
+  fs.writeFileSync(counter, String(seen + 1));
+  if (seen < flaky) {
+    emit({ type: 'error', message: 'workspace routing discovery failed' });
+    emit({ type: 'turn.failed', error: { message: 'workspace routing discovery failed' } });
+    process.exit(1);
+  }
   if (!input.includes('Bollplank setup check')) {
     const text = process.env.FAKE_CRITIC === 'malformed' ? 'Looks fine to me.' : 'Critique of ACME-0 health check v1\\nVerdict: Approve\\nNo material points.';
     emit({ type: 'item.completed', item: { id: 'item_0', type: 'agent_message', text } });
@@ -543,4 +555,41 @@ test('doctor says before its slow checks that they take a few minutes, and names
   assert.match(r.stderr, /Reading Linear from Claude Code\.\.\./);
   assert.match(r.stderr, /Running a test critique with Codex\.\.\./);
   assert.equal(r.stdout.includes('Reading Linear from'), false);
+});
+
+test('doctor tries a failed Linear read or test critique once more, and only once', { skip: fakesSkip }, (t) => {
+  const b = box(t);
+  b.install();
+  const calls = () => readFileSync(join(b.s.root, 'state', 'calls.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((c) => c.tool === 'codex' && c.prompt !== undefined);
+  const fresh = () => {
+    for (const f of ['calls.jsonl', 'flaky-PROBE', 'flaky-CRITIC']) rmSync(join(b.s.root, 'state', f), { force: true });
+  };
+  // Each fails once, then passes, and says so.
+  fresh();
+  let r = b.doctor(['--json'], { FAKE_FLAKY_PROBE: '1', FAKE_FLAKY_CRITIC: '1' });
+  assert.equal(r.status, 0, r.stdout);
+  let c = byId(r);
+  assert.match(c['linear.codex'].detail, /^Codex read 1 Linear team through .*, on the second try\.$/);
+  assert.equal(c['critic.codex'].detail, 'Codex answered in the critique format, on the second try');
+  assert.equal(c['linear.claude'].detail.includes('second try'), false);
+  assert.equal(calls().length, 4);
+  // Each fails twice, so it fails after one more try, and says so.
+  fresh();
+  r = b.doctor(['--json'], { FAKE_FLAKY_PROBE: '2', FAKE_FLAKY_CRITIC: '2' });
+  assert.equal(r.status, 1, r.stdout);
+  c = byId(r);
+  assert.match(c['linear.codex'].detail, / It failed on both tries\.$/);
+  assert.match(c['critic.codex'].detail, /^Codex failed: client-error\. workspace routing discovery failed\. It failed on both tries\.$/);
+  assert.equal(calls().length, 4);
+  // The person sees the second try on stderr.
+  fresh();
+  r = b.doctor([], { FAKE_FLAKY_CRITIC: '1' });
+  assert.match(r.stderr, /The test critique with Codex failed\. Trying once more\.\.\./);
+  // A probe that called a tool that is not a Linear read is never tried again.
+  fresh();
+  r = b.doctor(['--json'], { FAKE_LINEAR_CODEX: 'slack' });
+  c = byId(r);
+  assert.equal(c['linear.codex'].ok, false);
+  assert.match(c['linear.codex'].detail, /not a Linear read/);
+  assert.equal(calls().filter((x) => x.prompt.includes('Bollplank setup check')).length, 1);
 });
