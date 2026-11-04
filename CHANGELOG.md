@@ -2,7 +2,7 @@
 
 ## 0.3.3 (2026-11-04)
 
-- Doctor tries a failed Linear read or test critique once more before it reports a failure, since Claude Code, Codex or their services can fail for a moment. The check says when it passed on the second try or failed on both. A read that called a tool other than a Linear read is never tried again.
+- Doctor tries a failed Linear read or test critique once more before it reports a failure, since Claude Code, Codex or their services can fail for a moment. The check says when it passed on the second try or failed on both. A read that called a tool other than a Linear read is never tried again, even when it then ran out of time.
 
 ## 0.3.2 (2026-11-04)
 
