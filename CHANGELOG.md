@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.1 (2026-11-04)
+
+- The getting started guide renames a new team's Backlog status to Inbox, where ideas wait until one gets a brief.
+
 ## 0.3.0 (2026-11-04)
 
 Fixes from a Hello World walk through the getting started guide.
