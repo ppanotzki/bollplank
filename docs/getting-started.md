@@ -15,8 +15,13 @@ You use Terminal twice, to make a folder and to install. Everything else happens
 
 1. Sign up at [linear.app](https://linear.app). The free plan is enough.
 2. Click the workspace name at the top left, then **Settings**. Under **Teams**, add a team named **Acme**. Keep the key Linear suggests, here **ACM**.
-3. Rename the status **Backlog** to **Inbox**, where ideas wait until one gets a brief. Still in **Settings**, click **Teams**, **Acme**, then **Workflow**. Click the three dots next to Backlog, choose **Edit**, type `Inbox` and save.
-4. Leave the other statuses as they are. Init tells you which ones to add, in section 4.
+3. Still in **Settings**, click **Teams**, **Acme**, then **Workflow**. The statuses are listed in groups: Backlog, Unstarted, Started, Completed and Canceled.
+4. Rename the status **Backlog** to **Inbox**, where ideas wait until one gets a brief. Click the three dots next to Backlog, choose **Edit**, type `Inbox` and save.
+5. Add the three statuses Bollplank uses that a new team lacks. Click the **+** next to a group's name, type the status name and save:
+   - **Draft** in the Backlog group, under Inbox. A brief is written and critiqued here.
+   - **Ready** in Unstarted. The brief is approved.
+   - **Acceptance** in Started. The work is shipped and waits for your acceptance test.
+6. Leave the other statuses as they are. Bollplank also uses In Progress and Done.
 
 ## 2. A project folder
 
@@ -64,11 +69,7 @@ Init asks one question at a time in Terminal. A value in brackets is the default
    3. Send: `Create the Linear project Acme Shop in team ACM`
    4. If the app asks you to allow the call, check that it names the team ACM and the project Acme Shop. Otherwise check that the reply names them.
    5. Back in Terminal, press Return. Init says `Found the project Acme Shop in ACM now.`
-4. **Statuses.** Init lists the team's statuses, says which ones are missing and how to add them. Before you answer:
-   1. In Linear, click the workspace name, then **Settings**, **Teams**, **Acme**, **Workflow**.
-   2. With the **+** next to each group's name, add **Draft** in the Backlog group under Inbox, **Ready** in Unstarted and **Acceptance** in Started.
-   3. Back in Terminal, press Return at the draft question. Init says Draft is not there yet. Answer `y` to check Linear again, and it finds it.
-   4. Press Return for each of the other four.
+4. **Statuses.** Init lists the team's statuses and asks which one stands for each of Draft, Ready, In Progress, Acceptance and Done. Press Return for each of the five. If you missed a status in section 1, init says which one and how to add it. Add it in Linear, then answer `y` to check Linear again.
 
 **Step 4** asks for you and the critic.
 
