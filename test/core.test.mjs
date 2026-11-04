@@ -214,3 +214,15 @@ test('the docs check fails on a real ticket key and an internal name or command,
   // The shipped docs pass.
   assert.deepEqual(docsProblems(kit), []);
 });
+
+test('the editor schema needs checks only for a project with runs on, as validate does', () => {
+  const schema = JSON.parse(readFileSync(new URL('../schema/config.schema.json', import.meta.url), 'utf8'));
+  assert.deepEqual(schema.$defs.repo.required, ['github']);
+  const p = schema.$defs.project;
+  assert.deepEqual(p.if, { properties: { runs: { const: true } }, required: ['runs'] });
+  assert.deepEqual(p.then, { properties: { repos: { additionalProperties: { required: ['checks'] } } } });
+  const repo = { github: 'acme/acme-shop', baseBranch: 'main' };
+  const config = (runs) => ({ approver: { name: 'Ada' }, board: { kind: 'linear' }, projects: { 'acme-shop': { source: '/acme', tickets: '/acme/Tickets', repos: { 'acme-shop': repo }, runs } } });
+  assert.deepEqual(validate(config(false)), []);
+  assert.match(validate(config(true)).join('\n'), /checks: at least one check name/);
+});
