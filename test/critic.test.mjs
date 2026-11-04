@@ -669,6 +669,32 @@ test('a reported model that differs from the pinned one comes back as modelCorre
   }
 });
 
+test('with no pinned model, the model the client last reported fills the next Model line', { skip: fakesSkip }, (t) => {
+  const b = box();
+  after(t, b);
+  const first = b.call({ lead: 'claude', ticket: 'ACME-1' });
+  assert.equal(first.status, 0, first.stdout);
+  assert.ok(first.json.modelCorrection);
+  // The next call to the same critic posts the remembered model, so nothing needs correcting.
+  const next = b.call({ lead: 'claude', ticket: 'ACME-3' });
+  assert.equal(next.status, 0, next.stdout);
+  assert.equal(b.reviews().at(-1).prompt.split('\n').find((l) => l.startsWith('Model:')), 'Model: ' + first.json.model);
+  assert.equal(next.json.modelCorrection, undefined);
+});
+
+test('a model cache that cannot be written never stops a posted round from counting', { skip: fakesSkip }, (t) => {
+  const b = box();
+  after(t, b);
+  // A folder where the cache file should be makes every write to it fail.
+  mkdirSync(join(b.s.bollplank, 'critics', 'models.json'), { recursive: true });
+  const r = b.call({ lead: 'claude', ticket: 'ACME-1' });
+  assert.equal(r.status, 0, r.stdout);
+  assert.equal(r.json.round, 1);
+  // The round was saved, so the next call is round 2 and round 1 cannot be posted twice.
+  const again = b.call({ lead: 'claude', ticket: 'ACME-1' });
+  assert.equal(again.json.failure, 'round-mismatch');
+});
+
 test('the shipped prompts carry every placeholder, have the critic post on the issue and forbid editing files', () => {
   for (const f of ['critic.md', 'critic-same.md']) {
     const text = readFileSync(new URL(`../prompts/${f}`, import.meta.url), 'utf8');

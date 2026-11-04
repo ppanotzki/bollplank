@@ -43,10 +43,10 @@
     "model": { "type": "object", "properties": { "model": { "type": "string" }, "effort": { "type": "string" } } },
     "repo": {
       "type": "object",
-      "required": ["github", "checks"],
+      "required": ["github"],
       "properties": {
         "github": { "type": "string", "pattern": "^[\\w.-]+/[\\w.-]+$" },
-        "checks": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "checks": { "type": "array", "items": { "type": "string" }, "minItems": 1, "description": "The PR checks that must be green before a merge. Required when the project has runs on." },
         "baseBranch": { "type": "string" },
         "cloneNodeModules": { "type": "boolean" },
         "deploy": {
@@ -67,6 +67,8 @@
     "project": {
       "type": "object",
       "required": ["source", "tickets"],
+      "if": { "properties": { "runs": { "const": true } }, "required": ["runs"] },
+      "then": { "properties": { "repos": { "additionalProperties": { "required": ["checks"] } } } },
       "properties": {
         "mode": { "enum": ["repository", "consulting", "configuration"], "default": "repository" },
         "source": { "type": "string" },

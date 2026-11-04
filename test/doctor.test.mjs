@@ -216,7 +216,7 @@ test('doctor fails a missing board status and a client that cannot read Linear, 
   assert.equal(c['board.status.ACME.acceptance'].ok, false);
   assert.equal(c['board.status.ACME.acceptance'].required, true);
   assert.match(c['board.status.ACME.acceptance'].detail, /ACME has no status named "Acceptance" that Claude Code or Codex can read/);
-  assert.match(c['board.status.ACME.acceptance'].fix, /Settings, then Teams, then ACME, then Workflow\. Under Started, add a status named "Acceptance"\. Or set board\.statuses\.acceptance/);
+  assert.match(c['board.status.ACME.acceptance'].fix, /Settings, then Teams, then Acme, then Workflow\. Under Started, add a status named "Acceptance"\. Or set board\.statuses\.acceptance/);
   assert.doesNotMatch(c['board.status.ACME.acceptance'].detail, /spells it/);
   assert.equal(c['board.status.ACME.done'].ok, true);
   // Codex cannot read Linear while Claude Code can. Either may lead, so it fails.
@@ -323,7 +323,7 @@ test('doctor compares the board names exactly and names Linear\'s spelling when 
   const ready = c['board.status.acme.ready'];
   assert.equal(ready.ok, false);
   assert.equal(ready.detail, 'acme has no status named "Queued" that Claude Code or Codex can read');
-  assert.match(ready.fix, /Settings, then Teams, then acme, then Workflow\. Under Unstarted, add a status named "Queued"\. Or set board\.statuses\.ready in the config to a status that exists\./);
+  assert.match(ready.fix, /Settings, then Teams, then Acme, then Workflow\. Under Unstarted, add a status named "Queued"\. Or set board\.statuses\.ready in the config to a status that exists\./);
   assert.equal(c['board.status.acme.done'].ok, true);
   // The team and the project too.
   assert.equal(c['board.team.acme'].ok, false);
@@ -533,4 +533,14 @@ test('PATH holds a command only as an executable file, never a folder or a file 
   const env = { PATH: dirs.join(':') };
   assert.equal(findOnPath('acme-tool', env, 'darwin'), join(dirs[2], 'acme-tool'));
   assert.equal(findOnPath('acme-tool', { PATH: dirs.slice(0, 2).join(':') }, 'darwin'), null);
+});
+
+test('doctor says before its slow checks that they take a few minutes, and names each one on stderr', { skip: fakesSkip }, (t) => {
+  const b = box(t);
+  b.install();
+  const r = b.doctor([], { FAKE_LINEAR: 'connector' });
+  assert.match(r.stderr, /Doctor starts Claude Code and Codex for some checks\. This takes a few minutes\./);
+  assert.match(r.stderr, /Reading Linear from Claude Code\.\.\./);
+  assert.match(r.stderr, /Running a test critique with Codex\.\.\./);
+  assert.equal(r.stdout.includes('Reading Linear from'), false);
 });

@@ -48,7 +48,7 @@ A status is used only by its exact name. Each state's name comes from the projec
 | Key | Required | Default | Meaning |
 |---|---|---|---|
 | `github` | yes | | `owner/name`. |
-| `checks` | yes | | The PR checks that must be green before a merge. At least one. |
+| `checks` | with runs | | The PR checks that must be green before a merge. At least one when the project's `runs` is `true`. Merge refuses a repo without them. |
 | `baseBranch` | no | the remote's default, else `master` | The branch work starts from and merges into. |
 | `cloneNodeModules` | no | `false` | Copy `node_modules` into each worktree. An APFS clone on macOS. |
 | `deploy` | no | `{ "kind": "none" }` | How `bollplank deploy-wait` knows a merge is deployed. |

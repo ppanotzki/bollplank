@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.0 (2026-11-04)
+
+Fixes from a Hello World walk through the getting started guide.
+
+- The getting started guide is written for the Claude app, step by step. Terminal is used only to make the project folder and to install. It keeps the team key Linear suggests, here ACM, and its first ticket is one an empty repo can ship. The docs check allows `ACM-<n>` keys next to `ACME-<n>`.
+- Init asks for runs before checks and a deploy, and asks for those only when runs are on. With runs off a repo needs no checks, and `bollplank merge` refuses a repo without them. A config with runs on still needs checks.
+- Init says a Linear project is not the team when the team has none yet, and lists a team's projects to pick from. The steps to add every missing status come once, before the status questions, with the team's name as Linear's settings show it. Doctor's steps name the team the same way.
+- Init's sentence for creating a project from a session says to start a new session and to check its reply, since a client may run the call without asking.
+- The project's status question says what board and own mean. The runs question says what a run stops for.
+- The default copy style is "Plain sentences. No em or en dashes. No semicolons. No filler."
+- Without a pinned model, the critic's Model line is the model the client last reported, from doctor's dry run or an earlier critique, instead of `Unverified`.
+- Doctor says that its checks take a few minutes and names each slow check as it starts, on stderr.
+- An Approve critique says in a sentence or two what the critic checked. The approval header links its comment as a markdown link.
+
 ## 0.2.1 (2026-11-03)
 
 Fixes from a fresh setup on an empty home.
