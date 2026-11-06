@@ -468,3 +468,42 @@ test('remove with a submodule that was never initialized gives the same output a
   assert.equal(r.status, 0, r.stdout);
   assert.deepEqual(Object.keys(r.json).sort(), ['folder', 'folderRemoved', 'ok', 'removed', 'ticket']);
 });
+
+test('remove refuses changes in an embedded repo that has no .gitmodules entry', (t) => {
+  const f = setup(t);
+  f.ticket('create', 'acme-shop', 'ACME-29', '--slug', 'x', '--change', 'acme-api');
+  const wt = join(f.folder('ACME-29'), 'acme-api');
+  const tools = join(wt, 'tools');
+  mkdirSync(tools);
+  g(tools, 'init', '-q');
+  writeFileSync(join(tools, 'a.txt'), 'a\n');
+  g(tools, 'add', 'a.txt');
+  g(tools, 'commit', '-q', '-m', 'a');
+  g(wt, 'add', 'tools');
+  g(wt, 'commit', '-q', '-m', 'tools');
+  g(wt, 'push', '-q', 'origin', 'HEAD:main');
+  writeFileSync(join(tools, 'a.txt'), 'edited\n');
+  const r = remove(f, 'ACME-29');
+  assert.equal(r.status, 1, r.stdout);
+  assert.deepEqual(r.json.refusals, ['acme-api: uncommitted or untracked changes']);
+  assert.ok(existsSync(join(tools, 'a.txt')));
+});
+
+test('remove counts a staged new submodule as the repo\'s own change', (t) => {
+  const f = withSubmodules(t, 'ACME-30');
+  sub(f.wt, 'submodule', 'add', '-q', f.deep.origin, 'extra');
+  const r = remove(f, 'ACME-30');
+  assert.equal(r.status, 1, r.stdout);
+  assert.deepEqual(r.json.refusals, ['acme-api: uncommitted or untracked changes']);
+});
+
+test('remove refuses when a submodule check cannot run', (t) => {
+  const f = withSubmodules(t, 'ACME-31');
+  f.init();
+  g(f.libDir, 'remote', 'set-url', 'origin', join(f.s.root, 'gone.git'));
+  const r = remove(f, 'ACME-31');
+  assert.equal(r.status, 1, r.stdout);
+  assert.equal(r.json.refusals.length, 1, r.stdout);
+  assert.match(r.json.refusals[0], /^acme-api: lib: could not check the submodule: /);
+  assert.ok(existsSync(f.libDir));
+});
