@@ -8,7 +8,7 @@ The `checks` workflow runs the gate on Windows with Node 20 and 22. Tests that p
 
 - `test/critic.test.mjs` except the provider index, environment scrub, session roots and prompts
 - `test/merge.test.mjs` except the argument checks
-- `test/deploy-wait.test.mjs` for Amplify, GitHub Actions and the command timeout
+- `test/deploy-wait.test.mjs` for Amplify, GitHub Actions, the command timeout and a stopped command
 - `test/init.test.mjs` except the probe prompt, `judge` and the read only tool rule
 - `test/update.test.mjs` except the version sort
 - all of `test/doctor.test.mjs`, `test/uninstall.test.mjs` and `test/install.test.mjs`
@@ -22,8 +22,8 @@ So the critic, `merge`, setup, and two deploy kinds have no test run on Windows.
 - **Finding the clients.** Only `PATH` is searched, honouring `PATHEXT`. The app bundle locations are macOS paths.
 - **npm `.cmd` shims.** Node does not start a `.cmd` file without a shell, so a client whose `PATH` entry is one is found but not started. It must be a program Windows starts directly, such as an `.exe`.
 - **Skill links** are directory junctions.
-- **`node_modules`** is copied into worktrees, not cloned.
-- **A `command` deploy that times out** stops only the shell, not its children.
+- **`node_modules`** is copied into ticket worktrees and deploy checkouts, not cloned.
+- **A `command` deploy that times out or is stopped** stops only the shell, not its children. A child still running keeps the checkout folder busy, so the call can end as `checkout-failed` and leave the folder behind.
 
 ## If you try it
 

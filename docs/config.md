@@ -56,7 +56,7 @@ A status is used only by its exact name. Each state's name comes from the projec
 | `deploy.kind` | Keys | What `deploy-wait` does |
 |---|---|---|
 | `none` | | Returns at once. |
-| `command` | `command` | Runs the command with `{commit}` replaced by the merge commit, in the repo's checkout, and uses its exit code. |
+| `command` | `command` | Runs the command with `{commit}` replaced by the merge commit and uses its exit code. It runs in a clean, detached checkout of the merge commit, made for the call in a temporary folder and removed after it. `node_modules` is cloned in when the repo has `cloneNodeModules`. No other ignored file is, so a command that needs one, such as `.env`, gets it another way. The commit must be on `origin/<baseBranch>`, which is fetched first when the commit is not there yet. A repo without `origin/HEAD` needs `baseBranch` when its base is not `master`. |
 | `amplify` | `appId`, `region`, optional `branch` and `profile` | Waits for the Amplify job whose commit is the merge commit. `branch` defaults to the base branch. `profile` sets `AWS_PROFILE`. |
 | `github-actions` | `workflow` | Waits for the named workflow's run on the merge commit. The newest run decides. |
 

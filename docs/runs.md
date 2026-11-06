@@ -39,7 +39,7 @@ The approver tests and says "accept ACME-1". `bollplank-accept` adds the release
 
 1. `bollplank turn take` takes the machine's one shipping lock.
 2. `bollplank ticket refresh`, then each ticket branch is rebased on its base branch and pushed, and the run waits for the checks.
-3. For each changed repo in `shipOrder`: `bollplank merge --run`, `bollplank deploy-wait` on the merge commit, and `bollplank run deploy` with its result. The next repo ships only after a `succeeded` deploy. `review-stale` reopens the code stage. A step the config does not describe follows the project's own procedure, or a `command` deploy.
+3. For each changed repo in `shipOrder`: `bollplank merge --run`, `bollplank deploy-wait` on the merge commit, and `bollplank run deploy` with its result. The next repo ships only after a `succeeded` deploy. `review-stale` reopens the code stage. A step the config does not describe follows the project's own procedure, or a `command` deploy, which runs in a clean checkout of the merge commit.
 4. `bollplank turn release`, never while a started deploy has no known end.
 
 A failed deploy is recorded, the turn released, the remaining repos left unmerged, and the ticket kept in progress.
