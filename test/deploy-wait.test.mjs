@@ -421,6 +421,21 @@ test('a group that outlives the shutdown deadline is reported, not taken for don
   const r = await runCommand('exit 0', { cwd: s.root, timeoutMs: 10000, graceMs: 200, kill });
   assert.equal(r.code, 0);
   assert.equal(r.lingering, true);
+  // A program that survives and keeps the output pipes does not keep the process from exiting.
+  const pidFile = join(s.root, 'worker.pid');
+  const script = join(s.root, 'linger.mjs');
+  writeFileSync(script, `import { runCommand } from ${JSON.stringify(new URL('../lib/commands/deploy-wait.mjs', import.meta.url).href)};
+const kill = (pid) => { if (pid < 0) throw Object.assign(new Error('not permitted'), { code: 'EPERM' }); return true; };
+const r = await runCommand(${JSON.stringify(`sleep 20 & echo $! > ${JSON.stringify(pidFile)}`)}, { cwd: ${JSON.stringify(s.root)}, timeoutMs: 10000, graceMs: 200, kill });
+console.log(JSON.stringify({ lingering: r.lingering }));
+`);
+  const since = Date.now();
+  const out = execFileSync(process.execPath, [script], { encoding: 'utf8', timeout: 15000 });
+  assert.ok(Date.now() - since < 10000, 'the process exited without waiting for the worker');
+  assert.deepEqual(JSON.parse(out), { lingering: true });
+  try {
+    process.kill(Number(readFileSync(pidFile, 'utf8')), 'SIGKILL');
+  } catch {}
 });
 
 test('a checkout git refuses to remove is a failed call, even once its folder is gone', (t) => {
