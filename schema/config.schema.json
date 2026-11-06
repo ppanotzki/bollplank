@@ -49,6 +49,7 @@
         "checks": { "type": "array", "items": { "type": "string" }, "minItems": 1, "description": "The PR checks that must be green before a merge. Required when the project has runs on." },
         "baseBranch": { "type": "string" },
         "cloneNodeModules": { "type": "boolean" },
+        "disposable": { "type": "array", "items": { "type": "string", "minLength": 1, "pattern": "^(?![/~\\s])(?!(?:.*/)?\\.{1,2}(?:/|$))(?!.*//)(?=.*[\\p{L}\\p{N}])[^?\\[\\]{}!\\\\]*[^?\\[\\]{}!\\\\\\s]$" }, "description": "Ignored paths that ticket remove deletes without asking, such as build output. Patterns from the repo root: * within a folder name, ** for zero or more folders, a trailing / for a folder only. Relative, without . or .. folders, and with a letter or digit. Bollplank's own validation also checks how ** is placed." },
         "deploy": {
           "type": "object",
           "required": ["kind"],

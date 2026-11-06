@@ -93,7 +93,7 @@ For repository projects. A ticket folder `<tickets>/<TICKET>` holds one git work
 - **create** makes branch `<ticket>-<slug>` from `origin/<base branch>` in each changed repo, and a detached checkout for each repo used only for validation, including those in `validatesAgainst`. `node_modules` is cloned for repos with `cloneNodeModules`. A failed step removes the worktrees made before it (`create-failed`, with `rolledBack`).
 - **refresh** fetches every repo and moves validation checkouts to the latest base branch, refusing when one has local changes.
 - **status** reports each worktree's head and changed file count.
-- **remove** refuses on uncommitted, untracked or ignored files other than `node_modules`, and on commits that are neither on `origin/<base>` nor the merged head `bollplank merge --run` recorded. `--force-ignored` deletes the listed ignored files. Nothing forces past the rest.
+- **remove** refuses on uncommitted, untracked or ignored files other than `node_modules` and the repo's `disposable` paths ([config.md](config.md)), and on commits that are neither on `origin/<base>` nor the merged head `bollplank merge --run` recorded. `--force-ignored` deletes the listed ignored files. Nothing forces past the rest. On success, `disposable` names the disposable paths it deleted, per repo.
 
 Failures: `usage`, `no-ticket-folder`, `exists`, `create-failed`, `refused` (with `refusals` and `ignored`), `corrupt` and `git-failed`.
 

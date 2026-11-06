@@ -51,6 +51,7 @@ A status is used only by its exact name. Each state's name comes from the projec
 | `checks` | with runs | | The PR checks that must be green before a merge. At least one when the project's `runs` is `true`. Merge refuses a repo without them. |
 | `baseBranch` | no | the remote's default, else `master` | The branch work starts from and merges into. |
 | `cloneNodeModules` | no | `false` | Copy `node_modules` into each worktree. An APFS clone on macOS. |
+| `disposable` | no | `[]` | Ignored paths that `bollplank ticket remove` deletes without asking, such as build output. See below. |
 | `deploy` | no | `{ "kind": "none" }` | How `bollplank deploy-wait` knows a merge is deployed. |
 
 | `deploy.kind` | Keys | What `deploy-wait` does |
@@ -59,6 +60,8 @@ A status is used only by its exact name. Each state's name comes from the projec
 | `command` | `command` | Runs the command with `{commit}` replaced by the merge commit and uses its exit code. It runs in a clean, detached checkout of the merge commit, made for the call in a temporary folder and removed after it. `node_modules` is cloned in when the repo has `cloneNodeModules`. No other ignored file is, so a command that needs one, such as `.env`, gets it another way. The commit must be on `origin/<baseBranch>`, which is fetched first when the commit is not there yet. A repo without `origin/HEAD` needs `baseBranch` when its base is not `master`. |
 | `amplify` | `appId`, `region`, optional `branch` and `profile` | Waits for the Amplify job whose commit is the merge commit. `branch` defaults to the base branch. `profile` sets `AWS_PROFILE`. |
 | `github-actions` | `workflow` | Waits for the named workflow's run on the merge commit. The newest run decides. `workflow` is its name, file name or id. When the workflow's push filters, read from its file at the merge commit, exclude the merge, GitHub starts no run, so it returns at once. Whenever it cannot tell, it waits. |
+
+**Disposable paths.** `ticket remove` refuses ignored files other than `node_modules`, since an ignored file can be real work, such as a `.env` or local notes. List what your gates rebuild every time, and remove deletes those without asking, for example `["dist/", "packages/*/dist/", "**/*.tsbuildinfo"]`. A pattern is matched against the path from the repo root. `*` is any run of characters within one folder name, and `**` is a whole folder name that stands for zero or more folders. A trailing `/` names a folder only, and so does a final `/**`. A pattern without either names a file or a folder. A path inside a matching folder matches too. Git reports a folder whose contents are all ignored as one entry, so a file pattern such as `**/*.tsbuildinfo` does not cover a folder that holds such a file. List the folder. Validation refuses an absolute path, a `.` or `..` folder, the characters `? [ ] { } ! \` and a pattern without a letter or digit, such as `**/*` or `*.*`, which would match almost anything. List build output only. Remove deletes whatever matches without asking, and names it in its output.
 
 ### Consulting and configuration projects
 

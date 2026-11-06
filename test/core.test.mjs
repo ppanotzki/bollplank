@@ -127,6 +127,17 @@ test('validation names each problem and never accepts a repo without checks', ()
     if (want) assert.match(validate(d).join('\n'), want);
     else assert.deepEqual(validate(d), []);
   }
+  // Disposable patterns: a list, each one usable, named by index.
+  const dis = example();
+  dis.projects['acme-shop'].repos['acme-api'].disposable = ['dist/', '**/*', '/tmp', '../x', ''];
+  const dp = validate(dis).join('\n');
+  assert.match(dp, /repos\.acme-api\.disposable\[1\]: needs a letter or digit/);
+  assert.match(dp, /disposable\[2\]: must be relative to the repo root/);
+  assert.match(dp, /disposable\[3\]: must not hold a \. or \.\. folder/);
+  assert.match(dp, /disposable\[4\]: must be a pattern, not empty/);
+  assert.doesNotMatch(dp, /disposable\[0\]/);
+  dis.projects['acme-shop'].repos['acme-api'].disposable = 'dist/';
+  assert.match(validate(dis).join('\n'), /repos\.acme-api\.disposable: a list of patterns/);
   const conf = { ...example(), projects: { cfg: { mode: 'configuration', source: '/s', tickets: '/t', repos: { r: { github: 'a/b', checks: ['c'] } } } } };
   assert.match(validate(conf).join('\n'), /configuration mode cannot select repositories/);
 });
