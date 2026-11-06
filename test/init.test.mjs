@@ -659,6 +659,7 @@ test('a project set up again keeps every earlier answer, deploy included, when t
   const p = c.projects['acme-shop'];
   p.shipOrder = ['acme-web', 'acme-api'];
   p.repos['acme-web'].cloneNodeModules = true;
+  p.repos['acme-web'].disposable = ['dist/', '**/*.tsbuildinfo'];
   p.stopList = ['anything outside the ticket'];
   b.s.config(c);
   const before = structuredClone(b.config().projects['acme-shop']);
@@ -676,13 +677,14 @@ test('a project set up again keeps every earlier answer, deploy included, when t
   assert.equal(after.repos['acme-api'].baseBranch, 'release');
   assert.deepEqual(after.repos['acme-api'].checks, ['build']);
   assert.equal(after.repos['acme-web'].cloneNodeModules, true);
+  assert.deepEqual(after.repos['acme-web'].disposable, ['dist/', '**/*.tsbuildinfo']);
   assert.deepEqual(after.shipOrder, ['acme-web', 'acme-api']);
   // A changed deploy kind takes no settings from the old one, and a dropped repo leaves the order.
   const changed = b.init({ approver: 'Ada', addProject: true, source: b.src, projectName: 'acme-shop', replaceProject: true, writeConfig: true, repos: ['acme-web'], deploy: { 'acme-web': 'none' } });
   assert.equal(changed.status, 0, changed.stdout + changed.stderr);
   const last = b.config().projects['acme-shop'];
   assert.deepEqual(Object.keys(last.repos), ['acme-web']);
-  assert.deepEqual(last.repos['acme-web'], { github: 'acme/acme-web', checks: ['build', 'e2e'], baseBranch: 'main', deploy: { kind: 'none' }, cloneNodeModules: true });
+  assert.deepEqual(last.repos['acme-web'], { github: 'acme/acme-web', checks: ['build', 'e2e'], baseBranch: 'main', deploy: { kind: 'none' }, cloneNodeModules: true, disposable: ['dist/', '**/*.tsbuildinfo'] });
   assert.deepEqual(last.shipOrder, ['acme-web']);
 });
 

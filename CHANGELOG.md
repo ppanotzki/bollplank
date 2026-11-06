@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.0 (2026-11-06)
+
+- A repo can list `disposable` paths in the config, such as `["dist/", "**/*.tsbuildinfo"]`. `bollplank ticket remove` deletes ignored files that match without asking and names them in its output, so build output the gates made no longer stops every acceptance. Any other ignored file still refuses as before, and `--force-ignored` still deletes all of them. Patterns are matched from the repo root, with `*` within a folder name, `**` for zero or more folders and a trailing `/` for a folder only. Validation refuses absolute paths, `..`, other glob characters and patterns that match everything.
+
 ## 0.4.1 (2026-11-06)
 
 - A `github-actions` deploy no longer waits until its timeout for a merge the workflow's push filters exclude. It reads the push trigger from the workflow file at the merge commit, with its `branches`, `branches-ignore`, `paths` and `paths-ignore` lists, and checks them the way GitHub does against the merged pull request's base branch and the commit's changed files, when the commit is the squash merge of one pull request and no other branch or tag push could start the workflow on it. When they exclude the merge and no run is there, it returns `succeeded` at once with a note that no run was started. Whenever it cannot tell for sure, such as for a workflow with another trigger than `push` and `workflow_dispatch`, it waits for the run as before, and a timeout says why.

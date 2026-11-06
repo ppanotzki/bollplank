@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { sandbox, gitRepo, acmeConfig, isWindows } from './helpers.mjs';
 
@@ -213,6 +213,49 @@ test('remove lists ignored files other than node_modules and deletes them only w
   r = f.ticket('remove', 'acme-shop', 'ACME-7', '--force-ignored');
   assert.equal(r.status, 0, r.stdout);
   assert.equal(existsSync(wt), false);
+});
+
+test('remove deletes the repo\'s disposable ignored paths without asking, names them, and still refuses the rest', (t) => {
+  const f = setup(t);
+  // The setup's config with disposable patterns on acme-api.
+  const c = JSON.parse(readFileSync(join(f.s.bollplank, 'config.json'), 'utf8'));
+  c.projects['acme-shop'].repos['acme-api'].disposable = ['build/', '**/*.tsbuildinfo'];
+  f.s.config(c);
+  f.ticket('create', 'acme-shop', 'ACME-9', '--slug', 'x', '--change', 'acme-api');
+  const wt = join(f.folder('ACME-9'), 'acme-api');
+  writeFileSync(join(f.repos['acme-api'].work, '.git', 'info', 'exclude'), 'acme.env\nbuild/\n*.tsbuildinfo\ncache/\n');
+  mkdirSync(join(wt, 'build'));
+  writeFileSync(join(wt, 'build', 'out.txt'), 'out\n');
+  mkdirSync(join(wt, 'pkg'));
+  writeFileSync(join(wt, 'pkg', 'keep.txt'), 'tracked\n');
+  g(wt, 'add', 'pkg/keep.txt');
+  g(wt, 'commit', '-q', '-m', 'pkg');
+  g(wt, 'push', '-q', 'origin', 'HEAD:main');
+  writeFileSync(join(wt, 'pkg', 'tsconfig.tsbuildinfo'), '{}\n');
+  writeFileSync(join(wt, 'tsconfig.tsbuildinfo'), '{}\n');
+  // A folder git reports as one entry is not disposable because of a file it holds.
+  mkdirSync(join(wt, 'cache'));
+  writeFileSync(join(wt, 'cache', 'a.tsbuildinfo'), '{}\n');
+  writeFileSync(join(wt, 'acme.env'), 'ACME_SETTING=1\n');
+  let r = f.ticket('remove', 'acme-shop', 'ACME-9');
+  assert.equal(r.status, 1, r.stdout);
+  assert.deepEqual(r.json.ignored, { 'acme-api': ['acme.env', 'cache/'] });
+  assert.match(r.json.refusals[0], /^acme-api: ignored files that removal would delete: acme\.env, cache\/\. Move them away/);
+  assert.ok(existsSync(join(wt, 'build', 'out.txt')));
+  rmSync(join(wt, 'acme.env'));
+  rmSync(join(wt, 'cache'), { recursive: true });
+  r = f.ticket('remove', 'acme-shop', 'ACME-9');
+  assert.equal(r.status, 0, r.stdout);
+  assert.deepEqual(r.json.disposable, { 'acme-api': ['build/', 'pkg/tsconfig.tsbuildinfo', 'tsconfig.tsbuildinfo'] });
+  assert.equal(existsSync(wt), false);
+});
+
+test('remove without disposable paths gives the same output as before', (t) => {
+  const f = setup(t);
+  f.ticket('create', 'acme-shop', 'ACME-10', '--slug', 'x', '--change', 'acme-api');
+  const r = f.ticket('remove', 'acme-shop', 'ACME-10');
+  assert.equal(r.status, 0, r.stdout);
+  assert.deepEqual(Object.keys(r.json).sort(), ['folder', 'folderRemoved', 'ok', 'removed', 'ticket']);
 });
 
 test('a ticket or run record that is not valid JSON is a corrupt failure, never a crash', (t) => {
