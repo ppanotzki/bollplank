@@ -492,13 +492,14 @@ test('a node_modules clone killed on its own is a failed checkout, and the comma
 const WF = '.github/workflows/deploy.yml';
 // The commit is the squash merge of pull request 5 into main, and its parent came from pull request 4.
 const pr = (number, sha, base = 'main') => ({ number, merged_at: '2026-11-06T10:00:00Z', merge_commit_sha: sha, base: { ref: base } });
-function workflowApi(yaml, files, { workflows, parents, prs, parentPrs } = {}) {
+function workflowApi(yaml, files, { workflows, parents, prs, parentPrs, heads } = {}) {
   return {
     'repos/acme/acme-gha/actions/workflows': { total_count: 1, workflows: workflows ?? [{ id: 7, name: 'deploy', path: WF }] },
     [`repos/acme/acme-gha/contents/${WF}`]: { encoding: 'base64', content: Buffer.from(yaml).toString('base64') },
     [`repos/acme/acme-gha/commits/${commit}`]: { sha: commit, parents: parents ?? [{ sha: other }], files: files.map((name) => (typeof name === 'string' ? { filename: name } : name)) },
     [`repos/acme/acme-gha/commits/${commit}/pulls`]: prs ?? [pr(5, commit)],
     [`repos/acme/acme-gha/commits/${other}/pulls`]: parentPrs ?? [pr(4, other)],
+    [`repos/acme/acme-gha/commits/${commit}/branches-where-head`]: heads ?? [{ name: 'main' }],
   };
 }
 const pathsYaml = (list, key = 'paths') => `name: deploy\non:\n  push:\n    branches: [main]\n    ${key}:\n${list.map((p) => `      - '${p}'`).join('\n')}\n  workflow_dispatch:\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n`;
@@ -594,7 +595,7 @@ test('a branch filter that excludes the pull request base succeeds at once', { s
   // The files are not needed for a branch filter alone.
   assert.ok(!f.apiLog().some((a) => a[0].startsWith(`repos/acme/acme-gha/commits/${commit}?`)));
   // The base comes from the pull request, never from the config or the remote.
-  f.api(workflowApi(yaml, ['src/app.js'], { prs: [pr(5, commit, 'release/2')] }));
+  f.api(workflowApi(yaml, ['src/app.js'], { prs: [pr(5, commit, 'release/2')], heads: [{ name: 'release/2' }] }));
   f.seq([{ out: [runDone(42)] }]);
   r = f.wait('acme-gha-main');
   assert.equal(r.json.filter.answer, 'runs');
@@ -622,6 +623,17 @@ test('a commit that is not one squash merged pull request gives unknown and wait
   r = f.wait('acme-gha-main');
   assert.equal(r.json.filter.answer, 'unknown');
   assert.match(r.json.filter.reason, /not merged as one commit/);
+  // The commit was pushed on to another branch too, as in a promotion to release.
+  f.api(workflowApi(yaml, ['docs/guide.md'], { heads: [{ name: 'main' }, { name: 'release' }] }));
+  f.seq([{ out: [runDone(46)] }]);
+  r = f.wait('acme-gha-main');
+  assert.equal(r.json.filter.answer, 'unknown');
+  assert.match(r.json.filter.reason, /head of another branch/);
+  // A base that has moved on already leaves no branch with the commit as its head, which is fine.
+  f.api(workflowApi(yaml, ['docs/guide.md'], { heads: [] }));
+  f.seq([{ out: [] }]);
+  r = f.wait('acme-gha-main');
+  assert.equal(r.json.filter.answer, 'does-not-run');
 });
 
 test('a workflow with another trigger or an unreadable on key waits as before', { skip: fakesSkip }, (t) => {

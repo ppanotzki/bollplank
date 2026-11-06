@@ -83,6 +83,8 @@ test('patterns follow the cases of GitHub filter pattern cheat sheet', () => {
     ['**/*-post.md', ['my-post.md', 'path/their-post.md'], ['post.md']],
     ['**/migrate-*.sql', ['migrate-10909.sql', 'db/migrate-v1.0.sql', 'db/sept/migrate-v1.sql'], ['migrate.sql']],
     ['a\\*b', ['a*b'], ['axb']],
+    ['src/**', ['src/a\nb.js', 'src/x\r/y.js'], ['srca']],
+    ['src/*', ['src/a\nb.js'], ['src/a/b']],
   ];
   for (const [pattern, yes, no] of cases) {
     for (const v of yes) assert.ok(matches(pattern, v), `${pattern} should match ${v}`);
@@ -109,6 +111,7 @@ test('decide answers runs, does-not-run or unknown', () => {
   assert.equal(d({ branches: ['main'] }, null, { base: null }).answer, 'unknown');
   assert.equal(d({ paths: ['src/**'] }, ['src/a.js']).answer, 'runs');
   assert.equal(d({ paths: ['src/**'] }, ['docs/a.md']).answer, 'does-not-run');
+  assert.equal(d({ paths: ['src/**'] }, ['src/a\nb.js']).answer, 'runs');
   assert.equal(d({ paths: ['src/**', '!src/*.md'] }, ['src/a.md']).answer, 'does-not-run');
   assert.equal(d({ paths: ['src/**', '!src/*.md', 'src/keep.md'] }, ['src/keep.md']).answer, 'runs');
   assert.equal(d({ 'paths-ignore': ['docs/**'] }, ['docs/a.md']).answer, 'does-not-run');
