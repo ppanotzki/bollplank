@@ -492,7 +492,7 @@ test('a node_modules clone killed on its own is a failed checkout, and the comma
 const WF = '.github/workflows/deploy.yml';
 // The commit is the squash merge of pull request 5 into main, and its parent came from pull request 4.
 const pr = (number, sha, base = 'main') => ({ number, merged_at: '2026-11-06T10:00:00Z', merge_commit_sha: sha, base: { ref: base } });
-function workflowApi(yaml, files, { workflows, parents, prs, parentPrs, heads } = {}) {
+function workflowApi(yaml, files, { workflows, parents, prs, parentPrs, heads, tags } = {}) {
   return {
     'repos/acme/acme-gha/actions/workflows': { total_count: 1, workflows: workflows ?? [{ id: 7, name: 'deploy', path: WF }] },
     [`repos/acme/acme-gha/contents/${WF}`]: { encoding: 'base64', content: Buffer.from(yaml).toString('base64') },
@@ -500,6 +500,7 @@ function workflowApi(yaml, files, { workflows, parents, prs, parentPrs, heads } 
     [`repos/acme/acme-gha/commits/${commit}/pulls`]: prs ?? [pr(5, commit)],
     [`repos/acme/acme-gha/commits/${other}/pulls`]: parentPrs ?? [pr(4, other)],
     [`repos/acme/acme-gha/commits/${commit}/branches-where-head`]: heads ?? [{ name: 'main' }],
+    'repos/acme/acme-gha/tags': tags ?? [{ name: 'v0.1.0', commit: { sha: other } }],
   };
 }
 const pathsYaml = (list, key = 'paths') => `name: deploy\non:\n  push:\n    branches: [main]\n    ${key}:\n${list.map((p) => `      - '${p}'`).join('\n')}\n  workflow_dispatch:\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n`;
@@ -634,6 +635,32 @@ test('a commit that is not one squash merged pull request gives unknown and wait
   f.seq([{ out: [] }]);
   r = f.wait('acme-gha-main');
   assert.equal(r.json.filter.answer, 'does-not-run');
+});
+
+test('a path filter without a branch filter checks for a tag on the commit, since a tag push ignores paths', { skip: fakesSkip }, (t) => {
+  const f = setup(t);
+  const yaml = "on:\n  push:\n    paths: ['src/**']\n";
+  f.api(workflowApi(yaml, ['docs/guide.md']));
+  f.seq([{ out: [] }]);
+  let r = f.wait('acme-gha');
+  assert.equal(r.status, 0, r.stdout);
+  assert.equal(r.json.filter.answer, 'does-not-run');
+  assert.ok(apiPaths(f).includes('repos/acme/acme-gha/tags'));
+  // A tag pushed before the call whose run GitHub does not show yet.
+  f.api(workflowApi(yaml, ['docs/guide.md'], { tags: [{ name: 'v0.2.0', commit: { sha: commit } }] }));
+  f.seq([{ out: [] }]);
+  r = f.wait('acme-gha', commit, '--timeout', '0.2');
+  assert.equal(r.json.status, 'timeout');
+  assert.equal(r.json.filter.answer, 'unknown');
+  assert.match(r.json.filter.reason, /a tag points at the commit/);
+  // A tag list that cannot be read gives unknown too.
+  const api = workflowApi(yaml, ['docs/guide.md']);
+  api['repos/acme/acme-gha/tags'] = { fail: 'HTTP 500' };
+  f.api(api);
+  f.seq([{ out: [runDone(47)] }]);
+  r = f.wait('acme-gha');
+  assert.equal(r.json.filter.answer, 'unknown');
+  assert.equal(r.json.runId, 47);
 });
 
 test('a workflow with another trigger or an unreadable on key waits as before', { skip: fakesSkip }, (t) => {

@@ -101,7 +101,7 @@ test('patterns outside the syntax give null', () => {
 const trigger = (push, events = ['push']) => ({ events, push });
 
 test('decide answers runs, does-not-run or unknown', () => {
-  const d = (push, files, o = {}) => decide({ trigger: trigger(push, o.events), baseBranch: o.base === undefined ? 'main' : o.base, files });
+  const d = (push, files, o = {}) => decide({ trigger: trigger(push, o.events), baseBranch: o.base === undefined ? 'main' : o.base, files, tagged: o.tagged === undefined ? false : o.tagged });
   assert.equal(d(null, null).answer, 'runs');
   assert.equal(d({ branches: ['main'] }, null).answer, 'runs');
   assert.equal(d({ branches: ['release/**'] }, null).answer, 'does-not-run');
@@ -112,6 +112,11 @@ test('decide answers runs, does-not-run or unknown', () => {
   assert.equal(d({ paths: ['src/**'] }, ['src/a.js']).answer, 'runs');
   assert.equal(d({ paths: ['src/**'] }, ['docs/a.md']).answer, 'does-not-run');
   assert.equal(d({ paths: ['src/**'] }, ['src/a\nb.js']).answer, 'runs');
+  // Without a branch filter a tag on the commit, or not knowing, gives unknown. With one, tags do not matter.
+  assert.match(d({ paths: ['src/**'] }, ['docs/a.md'], { tagged: true }).reason, /a tag points at the commit/);
+  assert.match(d({ 'paths-ignore': ['docs/**'] }, ['docs/a.md'], { tagged: null }).reason, /tag points at the commit is not known/);
+  assert.equal(d({ branches: ['main'], paths: ['src/**'] }, ['docs/a.md'], { tagged: () => assert.fail('tags read') }).answer, 'does-not-run');
+  assert.equal(d({ paths: ['src/**'] }, ['src/a.js'], { tagged: () => assert.fail('tags read') }).answer, 'runs');
   assert.equal(d({ paths: ['src/**', '!src/*.md'] }, ['src/a.md']).answer, 'does-not-run');
   assert.equal(d({ paths: ['src/**', '!src/*.md', 'src/keep.md'] }, ['src/keep.md']).answer, 'runs');
   assert.equal(d({ 'paths-ignore': ['docs/**'] }, ['docs/a.md']).answer, 'does-not-run');
