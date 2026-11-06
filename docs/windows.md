@@ -23,7 +23,7 @@ So the critic, `merge`, setup, and two deploy kinds have no test run on Windows.
 - **npm `.cmd` shims.** Node does not start a `.cmd` file without a shell, so a client whose `PATH` entry is one is found but not started. It must be a program Windows starts directly, such as an `.exe`.
 - **Skill links** are directory junctions.
 - **`node_modules`** is copied into ticket worktrees and deploy checkouts, not cloned.
-- **A `command` deploy that times out or is stopped** stops only the shell, not its children.
+- **A `command` deploy that times out or is stopped** stops only the shell, not its children. A child still running keeps the checkout folder busy, so the call can end as `checkout-failed` and leave the folder behind.
 
 ## If you try it
 

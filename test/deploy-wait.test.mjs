@@ -300,16 +300,43 @@ test('only a commit on the base branch at origin is checked out', (t) => {
   // A commit no repo has.
   r = f.wait('acme-probe', other);
   assert.equal(r.json.failure, 'commit-missing');
+  // A branch whose name looks like a commit id is not that commit.
+  g.git('branch', 'deadbee1', g.c2);
+  r = f.wait('acme-probe', 'deadbee1');
+  assert.equal(r.json.failure, 'commit-missing');
   assert.equal(worktrees(g.work).length, 1);
-  // A repo whose folder is missing.
+  // A repo whose folder is missing, and one whose folder is a plain folder.
   r = f.wait('acme-gone', g.c2);
   assert.equal(r.status, 1, r.stdout);
   assert.equal(r.json.failure, 'no-checkout');
+  mkdirSync(join(f.s.root, 'src', 'acme-gone'));
+  r = f.wait('acme-gone', g.c2);
+  assert.equal(r.json.failure, 'no-checkout');
+  // A plain folder inside another git repo is not the repo either.
+  execFileSync('git', ['init', '-q', join(f.s.root, 'src')]);
+  r = f.wait('acme-gone', g.c2);
+  assert.equal(r.json.failure, 'no-checkout');
+  // A commit already on origin/main needs no fetch, and a fetch that fails names the fetch.
+  g.git('checkout', '-q', 'main');
+  g.git('remote', 'set-url', 'origin', join(f.s.root, 'no-such-origin.git'));
+  r = f.wait('acme-probe', g.c2);
+  assert.equal(r.status, 0, r.stdout);
+  r = f.wait('acme-probe', local);
+  assert.equal(r.json.failure, 'commit-missing');
+  assert.match(r.json.detail, /git fetch origin failed/);
+  assert.equal(worktrees(g.work).length, 1);
 });
 
 test('two calls at once each keep their own checkout for their whole run', async (t) => {
   const f = setup(t);
   const g = f.git['acme-probe'];
+  // Origin has moved past what the source folder knows, so both calls fetch at the same time.
+  const c3 = g.commit('a.txt', 'three\n');
+  const c4 = g.commit('a.txt', 'four\n');
+  g.git('push', '-q', 'origin', 'main');
+  g.git('update-ref', 'refs/remotes/origin/main', g.c2);
+  g.c1 = c3;
+  g.c2 = c4;
   const a = f.start('acme-probe', g.c1, { PROBE_SLEEP: '1500' });
   const b = f.start('acme-probe', g.c2, { PROBE_SLEEP: '300' });
   const [ra, rb] = await Promise.all([a.done, b.done]);

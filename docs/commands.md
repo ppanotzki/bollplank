@@ -196,7 +196,7 @@ Every result has `ok`, `project`, `repo`, `commit`, `kind`, `status` (`succeeded
 | Kind | Adds | Failures |
 |---|---|---|
 | `none` | `note` | none |
-| `command` | `command`, `checkout` (`clean`), `nodeModules`, `exitCode`, `signal`, `output` | `deploy-failed`, `timeout` (the command and its children are stopped), `command-failed`, `no-checkout` (the repo's folder is not a git repo), `commit-missing` (the commit is not on `origin/<baseBranch>` after a fetch), `checkout-failed` (the checkout could not be made or removed), `interrupted` (deploy-wait was stopped, so it stopped the command and removed the checkout) |
+| `command` | `command`, `checkout` (`clean`), `nodeModules`, `exitCode`, `signal`, `output` | `deploy-failed`, `timeout` (the command and its children are stopped), `command-failed`, `no-checkout` (the repo's folder is not the top of a git repo), `commit-missing` (the fetch failed, or the commit is not on `origin/<baseBranch>` after it), `checkout-failed` (the checkout or its `node_modules` could not be made, or the checkout could not be removed), `interrupted` (deploy-wait was stopped, so it stopped the command and removed the checkout) |
 | `amplify` | `appId`, `branch`, `region`, `jobId`, `jobStatus` | `deploy-failed`, `timeout`, `aws-failed` |
 | `github-actions` | `github`, `workflow`, `runId`, `runStatus`, `conclusion`, `url` | `deploy-failed`, `timeout`, `gh-failed` |
 
