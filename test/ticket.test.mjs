@@ -618,19 +618,21 @@ test('remove refuses a deinitialized submodule git folder that git cannot read',
   assert.ok(existsSync(join(modules, 'refs', 'heads', 'side')));
 });
 
-test('remove tells a name with slashes from git storage, such as a submodule named vendor/config', (t) => {
+test('remove tells names with slashes from git storage, such as vendor/config and vendor/objects/lib', (t) => {
   const f = withSubmodules(t, 'ACME-38');
-  sub(f.wt, 'submodule', 'add', '-q', '--name', 'vendor/config', f.deep.origin, 'vc');
-  g(f.wt, 'commit', '-q', '-m', 'vc');
+  const names = { 'vendor/config': 'vc', 'vendor/objects/lib': 'vo', 'vendor/refs/lib': 'vr' };
+  for (const [name, path] of Object.entries(names)) sub(f.wt, 'submodule', 'add', '-q', '--name', name, f.deep.origin, path);
+  g(f.wt, 'commit', '-q', '-m', 'vendor');
   g(f.wt, 'push', '-q', 'origin', 'HEAD:main');
-  assert.ok(existsSync(join(g(f.wt, 'rev-parse', '--absolute-git-dir'), 'modules', 'vendor', 'config', 'HEAD')));
+  const modules = join(g(f.wt, 'rev-parse', '--absolute-git-dir'), 'modules');
+  for (const name of Object.keys(names)) assert.ok(existsSync(join(modules, ...name.split('/'), 'HEAD')), name);
   let r = remove(f, 'ACME-38');
   assert.equal(r.status, 0, r.stdout);
-  // The same submodule deinitialized in a new ticket.
+  // The same submodules deinitialized in a new ticket.
   f.ticket('create', 'acme-shop', 'ACME-39', '--slug', 'x', '--change', 'acme-api');
   const wt = join(f.folder('ACME-39'), 'acme-api');
-  sub(wt, 'submodule', 'update', '-q', '--init', 'vc');
-  g(wt, 'submodule', 'deinit', '-q', '-f', 'vc');
+  sub(wt, 'submodule', 'update', '-q', '--init', ...Object.values(names));
+  g(wt, 'submodule', 'deinit', '-q', '-f', ...Object.values(names));
   r = remove(f, 'ACME-39');
   assert.equal(r.status, 0, r.stdout);
 });
