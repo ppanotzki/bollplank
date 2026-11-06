@@ -54,7 +54,7 @@
           "required": ["kind"],
           "properties": {
             "kind": { "enum": ["none", "command", "amplify", "github-actions"] },
-            "command": { "type": "string", "description": "For command: run with {commit} replaced." },
+            "command": { "type": "string", "description": "For command: run with {commit} replaced, in a clean checkout of the commit." },
             "appId": { "type": "string" },
             "branch": { "type": "string" },
             "region": { "type": "string" },

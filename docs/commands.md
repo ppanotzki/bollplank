@@ -189,14 +189,14 @@ A success has `merged`, `repo`, `pr`, `base`, `finalHead`, `mergeCommit`, `check
 bollplank deploy-wait <project> <repo> <commit> [--timeout <seconds>] [--interval <seconds>]
 ```
 
-Waits for the deploy of one commit the way the repo's `deploy.kind` says ([config.md](config.md)) and exits 0 only on success. `--timeout` defaults to 1800 and `--interval` to 15 seconds. A short `--timeout`, such as 30, only looks.
+Waits for the deploy of one commit the way the repo's `deploy.kind` says ([config.md](config.md)) and exits 0 only on success. A `command` deploy runs in a clean checkout of the commit, never in the repo's own folder. `--timeout` defaults to 1800 and `--interval` to 15 seconds. A short `--timeout`, such as 30, only looks.
 
 Every result has `ok`, `project`, `repo`, `commit`, `kind`, `status` (`succeeded`, `failed` or `timeout`), `ref` and `minutes`, ready for `run deploy`.
 
 | Kind | Adds | Failures |
 |---|---|---|
 | `none` | `note` | none |
-| `command` | `command`, `exitCode`, `signal`, `output` | `deploy-failed`, `timeout` (the command and its children are stopped), `command-failed` |
+| `command` | `command`, `checkout` (`clean`), `nodeModules`, `exitCode`, `signal`, `output` | `deploy-failed`, `timeout` (the command and its children are stopped), `command-failed`, `no-checkout` (the repo's folder is not a git repo), `commit-missing` (the commit is not on `origin/<baseBranch>` after a fetch), `checkout-failed` (the checkout could not be made or removed), `interrupted` (deploy-wait was stopped, so it stopped the command and removed the checkout) |
 | `amplify` | `appId`, `branch`, `region`, `jobId`, `jobStatus` | `deploy-failed`, `timeout`, `aws-failed` |
 | `github-actions` | `github`, `workflow`, `runId`, `runStatus`, `conclusion`, `url` | `deploy-failed`, `timeout`, `gh-failed` |
 

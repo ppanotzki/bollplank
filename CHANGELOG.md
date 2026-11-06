@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.0 (2026-11-06)
+
+- A `command` deploy now runs in a clean, detached checkout of the merge commit, made for the call in a temporary folder and removed after it, with `node_modules` cloned in when the repo has `cloneNodeModules`. Before, it ran in the repo's own folder, whatever revision and local edits sat there, so a command that checked the deploy against the code could fail a good deploy or pass an old one. A command that read local, ignored or uncommitted files from that folder no longer finds them.
+- `deploy-wait` fetches origin first and accepts only a commit on `origin/<baseBranch>`. It fails with `no-checkout`, `commit-missing`, `checkout-failed` or `interrupted` where it used to run the command anyway or leave it running.
+
 ## 0.3.5 (2026-11-04)
 
 - The repository is public, so the getting started guide no longer asks for an invite or a GitHub sign in before the clone.
