@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1 (2026-11-06)
+
+- `bollplank ticket remove` now checks inside submodules. Before, it looked only at the repo itself, so an ignored file such as `lib/.env` or a stash inside an initialized submodule was deleted without asking. Now every submodule git folder the worktree holds is checked, nested ones included, and also one that `git submodule deinit` left without a checkout. A checked out submodule refuses on changes, untracked and ignored files the same way as the repo, and on a checkout that is not the commit the repo records. Every such git folder refuses on a stash, and on commits on HEAD or a local branch that are on none of its remote branches after a fetch that prunes branches deleted on the remote. That includes a commit the repo's merged gitlink points to that was never pushed to the submodule's own remote. Paths are named from the repo root, and `disposable` patterns such as `lib/dist/` reach into submodules. A check that cannot run refuses. A repo whose submodules were never initialized behaves as before.
+
 ## 0.5.0 (2026-11-06)
 
 - A repo can list `disposable` paths in the config, such as `["dist/", "**/*.tsbuildinfo"]`. `bollplank ticket remove` deletes ignored files that match without asking and names them in its output, so build output the gates made no longer stops every acceptance. Any other ignored file still refuses as before, and `--force-ignored` still deletes all of them. Patterns are matched from the repo root, with `*` within a folder name, `**` for zero or more folders and a trailing `/` for a folder only. Validation refuses absolute paths, `..`, other glob characters and patterns without a letter or digit, such as `*.*`, which match almost anything.
