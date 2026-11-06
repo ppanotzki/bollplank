@@ -65,6 +65,11 @@ function setup(t) {
     'acme-probe': { github: 'acme/acme-probe', ...cmd(probeCmd) },
     'acme-probe-nm': { github: 'acme/acme-probe-nm', ...cmd(probeCmd, { cloneNodeModules: true }) },
     'acme-gone': { github: 'acme/acme-gone', ...cmd(probeCmd) },
+    // A background program that ignores SIGTERM and lets go of the output, and one that keeps it.
+    'acme-bg': { github: 'acme/acme-bg', ...cmd(`(trap '' TERM; exec sleep 20) > /dev/null 2>&1 & echo $! > ${JSON.stringify(join(s.root, 'bg.pid'))}; exit 0`) },
+    'acme-pipe': { github: 'acme/acme-pipe', ...cmd(`sleep 20 & echo $! > ${JSON.stringify(join(s.root, 'pipe.pid'))}; exit 0`) },
+    // A command that locks its own worktree, so git refuses to remove it.
+    'acme-lock': { github: 'acme/acme-lock', ...cmd('git worktree lock "$PWD"') },
     'acme-hold': { github: 'acme/acme-hold', ...cmd(`pwd > ${JSON.stringify(join(s.root, 'hold.cwd'))}; sleep 30 & echo $! > ${JSON.stringify(join(s.root, 'hold.pid'))}; wait`) },
     'acme-amp': { github: 'acme/acme-amp', checks: ['checks'], baseBranch: 'main', deploy: { kind: 'amplify', appId: 'd1acme', region: 'eu-west-1', profile: 'acme-deploy' } },
     'acme-gha': { github: 'acme/acme-gha', checks: ['checks'], deploy: { kind: 'github-actions', workflow: 'deploy' } },
@@ -74,7 +79,7 @@ function setup(t) {
   };
   s.config(acmeConfig(src, join(s.root, 'tickets'), repos));
   const git = {};
-  for (const name of ['acme-cmd', 'acme-probe', 'acme-probe-nm', 'acme-hold', 'acme-slow']) git[name] = sourceRepo(src, name);
+  for (const name of ['acme-cmd', 'acme-probe', 'acme-probe-nm', 'acme-hold', 'acme-slow', 'acme-bg', 'acme-pipe', 'acme-lock']) git[name] = sourceRepo(src, name);
   const probeOut = join(s.root, 'probe-out');
   const seen = (c) => JSON.parse(readFileSync(`${probeOut}.${c}`, 'utf8'));
   s.fake('aws', fakeSeq);
@@ -377,6 +382,54 @@ test('a stopped deploy-wait stops the command and removes its checkout', { skip:
   };
   for (let i = 0; i < 50 && alive(); i++) await new Promise((res) => setTimeout(res, 100));
   assert.equal(alive(), false, 'the background sleep was stopped');
+});
+
+const alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+test('programs a command leaves running are stopped before the result, even ones that ignore SIGTERM', { skip: isWindows ? 'process groups are POSIX' : false }, (t) => {
+  const f = setup(t);
+  let since = Date.now();
+  let r = f.wait('acme-bg', f.git['acme-bg'].c2);
+  assert.equal(r.status, 0, r.stdout);
+  assert.equal(r.json.status, 'succeeded');
+  assert.equal(alive(Number(readFileSync(join(f.s.root, 'bg.pid'), 'utf8'))), false, 'the program that ignores SIGTERM was killed');
+  assert.ok(Date.now() - since < 15000);
+  // A program that keeps the output pipes open does not hold the result back.
+  since = Date.now();
+  r = f.wait('acme-pipe', f.git['acme-pipe'].c2);
+  assert.equal(r.status, 0, r.stdout);
+  assert.ok(Date.now() - since < 8000, 'the result came without waiting for the program');
+  assert.equal(alive(Number(readFileSync(join(f.s.root, 'pipe.pid'), 'utf8'))), false);
+  assert.equal(worktrees(f.git['acme-pipe'].work).length, 1);
+});
+
+test('a checkout git refuses to remove is a failed call, even once its folder is gone', (t) => {
+  const f = setup(t);
+  const r = f.wait('acme-lock', f.git['acme-lock'].c2);
+  assert.equal(r.status, 1, r.stdout);
+  assert.equal(r.json.failure, 'checkout-failed');
+  assert.equal(r.json.status, 'failed');
+  assert.match(r.json.detail, /git worktree remove failed/);
+  assert.match(r.json.detail, /worktree entry is left/);
+});
+
+test('a node_modules clone killed on its own is a failed checkout, and the command never runs', { skip: process.platform === 'darwin' ? false : 'cp -c is used on macOS only' }, (t) => {
+  const f = setup(t);
+  f.s.fake('cp', "process.kill(process.pid, 'SIGKILL');");
+  const g = f.git['acme-probe-nm'];
+  const r = f.wait('acme-probe-nm', g.c2);
+  assert.equal(r.status, 1, r.stdout);
+  assert.equal(r.json.failure, 'checkout-failed');
+  assert.match(r.json.detail, /the copy got SIGKILL/);
+  assert.equal(existsSync(join(f.s.root, `probe-out.${g.c2}`)), false);
+  assert.equal(worktrees(g.work).length, 1);
 });
 
 test('deploy-wait checks its arguments', (t) => {
