@@ -490,11 +490,15 @@ test('a node_modules clone killed on its own is a failed checkout, and the comma
 
 // The GitHub API answers for a deploy workflow with this text and a commit that changes these files.
 const WF = '.github/workflows/deploy.yml';
-function workflowApi(yaml, files, { workflows, parents } = {}) {
+// The commit is the squash merge of pull request 5 into main, and its parent came from pull request 4.
+const pr = (number, sha, base = 'main') => ({ number, merged_at: '2026-11-06T10:00:00Z', merge_commit_sha: sha, base: { ref: base } });
+function workflowApi(yaml, files, { workflows, parents, prs, parentPrs } = {}) {
   return {
     'repos/acme/acme-gha/actions/workflows': { total_count: 1, workflows: workflows ?? [{ id: 7, name: 'deploy', path: WF }] },
     [`repos/acme/acme-gha/contents/${WF}`]: { encoding: 'base64', content: Buffer.from(yaml).toString('base64') },
     [`repos/acme/acme-gha/commits/${commit}`]: { sha: commit, parents: parents ?? [{ sha: other }], files: files.map((name) => (typeof name === 'string' ? { filename: name } : name)) },
+    [`repos/acme/acme-gha/commits/${commit}/pulls`]: prs ?? [pr(5, commit)],
+    [`repos/acme/acme-gha/commits/${other}/pulls`]: parentPrs ?? [pr(4, other)],
   };
 }
 const pathsYaml = (list, key = 'paths') => `name: deploy\non:\n  push:\n    branches: [main]\n    ${key}:\n${list.map((p) => `      - '${p}'`).join('\n')}\n  workflow_dispatch:\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n`;
@@ -578,22 +582,46 @@ test('a filter that excludes the merge still waits for a run that is there after
   assert.equal(r.json.note, undefined);
 });
 
-test('a branch filter that excludes the base branch succeeds at once, and an unknown base branch waits', { skip: fakesSkip }, (t) => {
+test('a branch filter that excludes the pull request base succeeds at once', { skip: fakesSkip }, (t) => {
   const f = setup(t);
   const yaml = "on:\n  push:\n    branches:\n    - 'release/**'\n";
   f.api(workflowApi(yaml, ['src/app.js']));
   f.seq([{ out: [] }]);
-  let r = f.wait('acme-gha-main');
+  let r = f.wait('acme-gha');
   assert.equal(r.status, 0, r.stdout);
   assert.equal(r.json.filter.answer, 'does-not-run');
   assert.match(r.json.filter.reason, /the branch filter excludes main/);
-  assert.ok(!apiPaths(f).some((p) => p.includes('/commits/')));
-  // acme-gha has no baseBranch and no checkout, so the master fallback is never trusted.
+  // The files are not needed for a branch filter alone.
+  assert.ok(!f.apiLog().some((a) => a[0].startsWith(`repos/acme/acme-gha/commits/${commit}?`)));
+  // The base comes from the pull request, never from the config or the remote.
+  f.api(workflowApi(yaml, ['src/app.js'], { prs: [pr(5, commit, 'release/2')] }));
+  f.seq([{ out: [runDone(42)] }]);
+  r = f.wait('acme-gha-main');
+  assert.equal(r.json.filter.answer, 'runs');
+  assert.equal(r.json.runId, 42);
+});
+
+test('a commit that is not one squash merged pull request gives unknown and waits', { skip: fakesSkip }, (t) => {
+  const f = setup(t);
+  const yaml = pathsYaml(['src/**']);
+  // No merged pull request, as for a direct push of several commits.
+  f.api(workflowApi(yaml, ['docs/guide.md'], { prs: [] }));
   f.seq([{ out: [] }]);
-  r = f.wait('acme-gha', commit, '--timeout', '0.2');
+  let r = f.wait('acme-gha-main', commit, '--timeout', '0.2');
   assert.equal(r.json.status, 'timeout');
   assert.equal(r.json.filter.answer, 'unknown');
-  assert.match(r.json.detail, /no run for this commit yet, and whether the workflow runs for this push is not known: the base branch is not known/);
+  assert.match(r.json.detail, /no run for this commit yet, and whether the workflow runs for this push is not known: the commit is not the merge commit of one merged pull request/);
+  // A pull request that is open, or merged as another commit.
+  f.api(workflowApi(yaml, ['docs/guide.md'], { prs: [{ ...pr(5, other), merged_at: null }, pr(6, other)] }));
+  f.seq([{ out: [runDone(43)] }]);
+  r = f.wait('acme-gha-main');
+  assert.equal(r.json.filter.answer, 'unknown');
+  // A rebase merge of several commits: the parent belongs to the same pull request.
+  f.api(workflowApi(yaml, ['docs/guide.md'], { parentPrs: [pr(5, commit)] }));
+  f.seq([{ out: [runDone(44)] }]);
+  r = f.wait('acme-gha-main');
+  assert.equal(r.json.filter.answer, 'unknown');
+  assert.match(r.json.filter.reason, /not merged as one commit/);
 });
 
 test('a workflow with another trigger or an unreadable on key waits as before', { skip: fakesSkip }, (t) => {
@@ -656,6 +684,30 @@ test('a failing gh api call, more than 300 files or a merge commit gives unknown
   f.seq([{ out: [runDone(41)] }]);
   r = f.wait('acme-gha-main');
   assert.equal(r.json.filter.answer, 'runs');
+});
+
+test('the workflow list is read page by page, a missing file gives unknown, and a failing run list is gh-failed', { skip: fakesSkip }, (t) => {
+  const f = setup(t);
+  const filler = Array.from({ length: 100 }, (_, i) => ({ id: 100 + i, name: `ci ${i}`, path: `.github/workflows/ci-${i}.yml` }));
+  const api = workflowApi(pathsYaml(['src/**']), ['docs/guide.md']);
+  api['repos/acme/acme-gha/actions/workflows'] = { pages: [{ workflows: filler }, { workflows: [{ id: 7, name: 'deploy', path: WF }] }] };
+  f.api(api);
+  f.seq([{ out: [] }]);
+  let r = f.wait('acme-gha');
+  assert.equal(r.json.filter.answer, 'does-not-run');
+  assert.equal(f.apiLog().filter((a) => a[0].startsWith('repos/acme/acme-gha/actions/workflows')).length, 2);
+  delete api[`repos/acme/acme-gha/contents/${WF}`];
+  f.api(api);
+  f.seq([{ out: [runDone(45)] }]);
+  r = f.wait('acme-gha');
+  assert.equal(r.json.filter.answer, 'unknown');
+  assert.match(r.json.filter.reason, /HTTP 404/);
+  f.api(workflowApi(pathsYaml(['src/**']), ['docs/guide.md']));
+  f.seq([{ fail: 'gh: HTTP 502' }]);
+  r = f.wait('acme-gha');
+  assert.equal(r.status, 1);
+  assert.equal(r.json.failure, 'gh-failed');
+  assert.equal(r.json.filter.answer, 'does-not-run');
 });
 
 test('deploy-wait checks its arguments', (t) => {

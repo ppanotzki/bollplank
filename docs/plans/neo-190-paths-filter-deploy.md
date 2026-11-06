@@ -1,6 +1,6 @@
 # Plan: a github-actions deploy whose workflow runs only for some paths
 
-Status: v1, 2026-11-06. Brief v3, approved. Code review stage selected.
+Status: v2, 2026-11-06. v2 follows the internal review: the base branch and the files come only from a proven squash merge of one pull request, the glob gives null for characters outside the documented syntax, and gh api calls time out after a minute. Brief v3, approved. Code review stage selected.
 
 Base: master c2fb2e2, which already holds the clean checkout for command deploys. The version there is 0.4.0 and tagged, so this is 0.4.1.
 

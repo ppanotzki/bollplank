@@ -12,6 +12,9 @@ test('the reader takes the on key as a scalar, a flow list, a block list or a ma
   assert.deepEqual(read('on:\n- push\n'), { events: ['push'], push: null });
   assert.deepEqual(read('name: x\non:\n  push:\n  workflow_dispatch:\n    inputs:\n      why:\n        type: string\njobs:\n  a:\n    runs-on: x\n'), { events: ['push', 'workflow_dispatch'], push: null });
   assert.deepEqual(read('on:\n  push: {}\n'), { events: ['push'], push: null });
+  assert.deepEqual(read('on:\n  push: { }\n'), { events: ['push'], push: null });
+  assert.deepEqual(read('# license\n---\non: push\n'), { events: ['push'], push: null });
+  assert.deepEqual(read('on:\n  push: # deploy\n    paths: [src/**, ]\n'), { events: ['push'], push: { paths: ['src/**'] } });
 });
 
 test('the reader takes the push filters as flow or block lists, quoted or plain', () => {
@@ -88,7 +91,9 @@ test('patterns follow the cases of GitHub filter pattern cheat sheet', () => {
 });
 
 test('patterns outside the syntax give null', () => {
-  for (const p of ['', '?a', '+a', '**?', '*+', '[]', '[^a]', '[a', '[!x]', 'a\\']) assert.equal(globToRegExp(p), null, p);
+  for (const p of ['', '?a', '+a', '**?', '*+', '[]', '[^a]', '[a', '[!x]', 'a\\', 'src/{api,web}/**', 'a(b)', 'a|b', 'a@b', '^a', 'a$', './src/**', '/src/**', 'src/', 'a//b', 'src**/x', 'a**/b']) assert.equal(globToRegExp(p), null, p);
+  assert.ok(globToRegExp('a/**/b'));
+  assert.ok(globToRegExp('**/b'));
 });
 
 const trigger = (push, events = ['push']) => ({ events, push });
@@ -123,10 +128,16 @@ test('decide answers runs, does-not-run or unknown', () => {
     [{ paths: ['a'] }, null, {}, /not known/],
     [{ paths: ['a'] }, [], {}, /no file/],
     [{ paths: ['a'] }, Array.from({ length: 301 }, (_, i) => `f${i}`), {}, /more than 300/],
+    [{ branches: ['refs/heads/main'] }, null, {}, /full ref/],
+    [{ 'branches-ignore': ['!refs/heads/x', 'dev'] }, null, {}, /full ref/],
+    [{ paths: ['src/{a,b}/**'] }, ['src/a/x'], {}, /outside the syntax/],
   ]) {
     const r = d(push, files, o);
     assert.equal(r.answer, 'unknown', JSON.stringify(push));
     assert.match(r.reason, reason);
   }
   assert.equal(decide({ trigger: { unknown: 'no on key' } }).reason, 'no on key');
+  // A base branch and files given as functions are read only when a filter needs them.
+  assert.equal(decide({ trigger: trigger(null), baseBranch: () => assert.fail('base read'), files: () => assert.fail('files read') }).answer, 'runs');
+  assert.equal(decide({ trigger: trigger({ branches: ['dev'] }), baseBranch: () => 'main' }).answer, 'does-not-run');
 });
