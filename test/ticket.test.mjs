@@ -485,7 +485,7 @@ test('remove refuses changes in an embedded repo that has no .gitmodules entry',
   writeFileSync(join(tools, 'a.txt'), 'edited\n');
   const r = remove(f, 'ACME-29');
   assert.equal(r.status, 1, r.stdout);
-  assert.deepEqual(r.json.refusals, ['acme-api: uncommitted or untracked changes']);
+  assert.deepEqual(r.json.refusals, ['acme-api: tools: uncommitted or untracked changes', 'acme-api: tools: 1 commits on no remote of the submodule']);
   assert.ok(existsSync(join(tools, 'a.txt')));
 });
 
@@ -506,4 +506,59 @@ test('remove refuses when a submodule check cannot run', (t) => {
   assert.equal(r.json.refusals.length, 1, r.stdout);
   assert.match(r.json.refusals[0], /^acme-api: lib: could not check the submodule: /);
   assert.ok(existsSync(f.libDir));
+});
+
+test('remove checks the git folder of an embedded repo that has no .gitmodules entry', (t) => {
+  const f = setup(t);
+  const lib = gitRepo(f.s.root, 'acme-emb', 'main');
+  lib.commit('a.txt', 'a\n');
+  lib.git('push', '-q', '-u', 'origin', 'main');
+  f.ticket('create', 'acme-shop', 'ACME-32', '--slug', 'x', '--change', 'acme-api');
+  const wt = join(f.folder('ACME-32'), 'acme-api');
+  g(wt, 'clone', '-q', lib.origin, 'emb');
+  g(wt, 'add', 'emb');
+  g(wt, 'commit', '-q', '-m', 'emb');
+  g(wt, 'push', '-q', 'origin', 'HEAD:main');
+  writeFileSync(join(wt, 'emb', 'a.txt'), 'edited\n');
+  g(join(wt, 'emb'), 'stash', '-q');
+  const r = remove(f, 'ACME-32');
+  assert.equal(r.status, 1, r.stdout);
+  assert.deepEqual(r.json.refusals, ['acme-api: emb: a stash that removal would delete']);
+});
+
+test('remove counts a shallow submodule\'s boundary and a commit on a remote tag as on the remote', (t) => {
+  const f = withSubmodules(t, 'ACME-33');
+  // lib's remote moves one commit past what acme-api records, and that commit is only on tag v1.
+  const recorded = f.lib.git('rev-parse', 'HEAD');
+  f.lib.commit('next.txt', 'next\n');
+  f.lib.git('push', '-q', 'origin', 'main');
+  sub(f.wt, 'submodule', 'update', '-q', '--init', '--depth', '1', 'lib');
+  assert.equal(g(f.libDir, 'rev-parse', 'HEAD'), recorded);
+  writeFileSync(join(f.libDir, 'acme.env'), 'ACME_SETTING=1\n');
+  let r = remove(f, 'ACME-33');
+  assert.deepEqual(r.json.refusals.filter((x) => /commits/.test(x)), [], r.stdout);
+  rmSync(join(f.libDir, 'acme.env'));
+  // A tag-only commit the submodule checks out.
+  g(f.libDir, 'checkout', '-q', '--detach');
+  writeFileSync(join(f.libDir, 'rel.txt'), 'rel\n');
+  g(f.libDir, 'add', 'rel.txt');
+  g(f.libDir, 'commit', '-q', '-m', 'release');
+  r = remove(f, 'ACME-33');
+  assert.ok(r.json.refusals.includes('acme-api: lib: 1 commits on no remote of the submodule'), r.stdout);
+  g(f.libDir, 'tag', 'v1');
+  g(f.libDir, 'push', '-q', 'origin', 'v1');
+  g(f.wt, 'add', 'lib');
+  g(f.wt, 'commit', '-q', '-m', 'lib v1');
+  g(f.wt, 'push', '-q', 'origin', 'HEAD:main');
+  r = remove(f, 'ACME-33');
+  assert.equal(r.status, 0, r.stdout);
+});
+
+test('remove refuses a submodule that has linked worktrees of its own', (t) => {
+  const f = withSubmodules(t, 'ACME-34');
+  f.init();
+  g(f.libDir, 'worktree', 'add', '-q', '--detach', join(f.s.root, 'lib-side'));
+  const r = remove(f, 'ACME-34');
+  assert.equal(r.status, 1, r.stdout);
+  assert.deepEqual(r.json.refusals, ['acme-api: lib: has linked worktrees that removal would break']);
 });
