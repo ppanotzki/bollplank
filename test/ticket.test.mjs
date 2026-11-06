@@ -617,3 +617,20 @@ test('remove refuses a deinitialized submodule git folder that git cannot read',
   assert.ok(r.json.refusals.some((x) => x.startsWith('acme-api: lib (no checkout): could not check the submodule: ')), r.stdout);
   assert.ok(existsSync(join(modules, 'refs', 'heads', 'side')));
 });
+
+test('remove tells a name with slashes from git storage, such as a submodule named vendor/config', (t) => {
+  const f = withSubmodules(t, 'ACME-38');
+  sub(f.wt, 'submodule', 'add', '-q', '--name', 'vendor/config', f.deep.origin, 'vc');
+  g(f.wt, 'commit', '-q', '-m', 'vc');
+  g(f.wt, 'push', '-q', 'origin', 'HEAD:main');
+  assert.ok(existsSync(join(g(f.wt, 'rev-parse', '--absolute-git-dir'), 'modules', 'vendor', 'config', 'HEAD')));
+  let r = remove(f, 'ACME-38');
+  assert.equal(r.status, 0, r.stdout);
+  // The same submodule deinitialized in a new ticket.
+  f.ticket('create', 'acme-shop', 'ACME-39', '--slug', 'x', '--change', 'acme-api');
+  const wt = join(f.folder('ACME-39'), 'acme-api');
+  sub(wt, 'submodule', 'update', '-q', '--init', 'vc');
+  g(wt, 'submodule', 'deinit', '-q', '-f', 'vc');
+  r = remove(f, 'ACME-39');
+  assert.equal(r.status, 0, r.stdout);
+});
