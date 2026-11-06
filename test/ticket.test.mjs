@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { sandbox, gitRepo, acmeConfig, isWindows } from './helpers.mjs';
+import { submoduleChecks } from '../lib/commands/ticket.mjs';
 
 const g = (dir, ...args) => execFileSync('git', ['-C', dir, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 
@@ -635,4 +636,33 @@ test('remove tells names with slashes from git storage, such as vendor/config an
   g(wt, 'submodule', 'deinit', '-q', '-f', ...Object.values(names));
   r = remove(f, 'ACME-39');
   assert.equal(r.status, 0, r.stdout);
+});
+
+test('a path that cannot be resolved refuses rather than skipping a submodule check', (t) => {
+  const s = sandbox();
+  t.after(s.clean);
+  const app = gitRepo(s.root, 'acme-app', 'main');
+  app.commit('README.md', 'app\n');
+  const emb = join(app.work, 'emb');
+  mkdirSync(emb);
+  g(emb, 'init', '-q');
+  writeFileSync(join(emb, 'a.txt'), 'a\n');
+  g(emb, 'add', 'a.txt');
+  g(emb, 'commit', '-q', '-m', 'a');
+  app.git('add', 'emb');
+  app.git('commit', '-q', '-m', 'emb');
+  writeFileSync(join(emb, 'a.txt'), 'edited\n');
+  g(emb, 'stash', '-q');
+  const embGit = realpathSync.native(join(emb, '.git'));
+  assert.ok(submoduleChecks('acme-app', app.work).refusals.includes('acme-app: emb: a stash that removal would delete'));
+  // Resolving the worktree fails while the git folder inside it resolves, or the other way round.
+  for (const failing of [realpathSync.native(app.work), embGit]) {
+    const realpath = (p) => {
+      const r = realpathSync.native(p);
+      if (r === failing) throw new Error(`cannot resolve ${p}`);
+      return r;
+    };
+    const { refusals } = submoduleChecks('acme-app', app.work, realpath);
+    assert.deepEqual(refusals, ['acme-app: could not list its submodules: cannot resolve ' + (failing === embGit ? g(emb, 'rev-parse', '--absolute-git-dir') : app.work)]);
+  }
 });
