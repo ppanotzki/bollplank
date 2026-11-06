@@ -4,7 +4,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { sandbox, acmeConfig, fakesSkip, isWindows, gitRepo, bin } from './helpers.mjs';
-import { sameCommit } from '../lib/commands/deploy-wait.mjs';
+import { runCommand, sameCommit } from '../lib/commands/deploy-wait.mjs';
 
 const commit = 'abc1234def5678abc1234def5678abc1234def56';
 const other = '0123456789abcdef0123456789abcdef01234567';
@@ -69,7 +69,7 @@ function setup(t) {
     'acme-bg': { github: 'acme/acme-bg', ...cmd(`(trap '' TERM; exec sleep 20) > /dev/null 2>&1 & echo $! > ${JSON.stringify(join(s.root, 'bg.pid'))}; exit 0`) },
     'acme-pipe': { github: 'acme/acme-pipe', ...cmd(`sleep 20 & echo $! > ${JSON.stringify(join(s.root, 'pipe.pid'))}; exit 0`) },
     // A command that locks its own worktree, so git refuses to remove it.
-    'acme-lock': { github: 'acme/acme-lock', ...cmd('git worktree lock "$PWD"') },
+    'acme-lock': { github: 'acme/acme-lock', ...cmd('git worktree lock .') },
     'acme-hold': { github: 'acme/acme-hold', ...cmd(`pwd > ${JSON.stringify(join(s.root, 'hold.cwd'))}; sleep 30 & echo $! > ${JSON.stringify(join(s.root, 'hold.pid'))}; wait`) },
     'acme-amp': { github: 'acme/acme-amp', checks: ['checks'], baseBranch: 'main', deploy: { kind: 'amplify', appId: 'd1acme', region: 'eu-west-1', profile: 'acme-deploy' } },
     'acme-gha': { github: 'acme/acme-gha', checks: ['checks'], deploy: { kind: 'github-actions', workflow: 'deploy' } },
@@ -408,6 +408,19 @@ test('programs a command leaves running are stopped before the result, even ones
   assert.ok(Date.now() - since < 8000, 'the result came without waiting for the program');
   assert.equal(alive(Number(readFileSync(join(f.s.root, 'pipe.pid'), 'utf8'))), false);
   assert.equal(worktrees(f.git['acme-pipe'].work).length, 1);
+});
+
+test('a group that outlives the shutdown deadline is reported, not taken for done', { skip: isWindows ? 'process groups are POSIX' : false }, async (t) => {
+  const s = sandbox();
+  t.after(s.clean);
+  // A group that may not be signalled: every signal fails with EPERM, and the group looks alive.
+  const kill = (pid) => {
+    if (pid < 0) throw Object.assign(new Error('not permitted'), { code: 'EPERM' });
+    return true;
+  };
+  const r = await runCommand('exit 0', { cwd: s.root, timeoutMs: 10000, graceMs: 200, kill });
+  assert.equal(r.code, 0);
+  assert.equal(r.lingering, true);
 });
 
 test('a checkout git refuses to remove is a failed call, even once its folder is gone', (t) => {
