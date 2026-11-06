@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1 (2026-11-06)
+
+- A `github-actions` deploy no longer waits until its timeout for a merge the workflow's push filters exclude. It reads the push trigger from the workflow file at the merge commit, with its `branches`, `branches-ignore`, `paths` and `paths-ignore` lists, and checks them the way GitHub does against the merged pull request's base branch and the commit's changed files, when the commit is the squash merge of one pull request and no other branch or tag push could start the workflow on it. When they exclude the merge and no run is there, it returns `succeeded` at once with a note that no run was started. Whenever it cannot tell for sure, such as for a workflow with another trigger than `push` and `workflow_dispatch`, it waits for the run as before, and a timeout says why.
+
 ## 0.4.0 (2026-11-06)
 
 - A `command` deploy now runs in a clean, detached checkout of the merge commit, made for the call in a temporary folder and removed after it, with `node_modules` cloned in when the repo has `cloneNodeModules`. Before, it ran in the repo's own folder, whatever revision and local edits sat there, so a command that checked the deploy against the code could fail a good deploy or pass an old one. A command that read local, ignored or uncommitted files from that folder no longer finds them.

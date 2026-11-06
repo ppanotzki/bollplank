@@ -23,6 +23,26 @@ if (answer.fail) { process.stderr.write(answer.fail + '\\n'); process.exit(1); }
 console.log(JSON.stringify(answer.out));
 `;
 
+// The fake gh: gh api answers from the FAKE_API fixture by path, the query left out, and logs to
+// FAKE_LOG.api. A fixture answer { pages: [...] } gives one page per call by the page= number. A
+// path the fixture lacks fails like a 404. Every other call is fakeSeq, so run list keeps its
+// sequence and its log.
+const fakeGh = `
+const ghFs = require('fs');
+const args = process.argv.slice(2);
+if (args[0] === 'api') {
+  ghFs.appendFileSync(process.env.FAKE_LOG + '.api', JSON.stringify(args.slice(1)) + '\\n');
+  const api = ghFs.existsSync(process.env.FAKE_API) ? JSON.parse(ghFs.readFileSync(process.env.FAKE_API, 'utf8')) : {};
+  const [path, query = ''] = args[1].split('?');
+  const page = Number((query.match(/(?:^|&)page=(\\d+)/) || [])[1] || 1);
+  if (!Object.hasOwn(api, path)) { process.stderr.write('gh: Not Found (HTTP 404)\\n'); process.exit(1); }
+  const a = api[path];
+  if (a && a.fail) { process.stderr.write(a.fail + '\\n'); process.exit(1); }
+  console.log(JSON.stringify(a && a.pages ? (a.pages[page - 1] ?? a.pages[a.pages.length - 1]) : a));
+  process.exit(0);
+}
+${fakeSeq}`;
+
 // The probe a command deploy runs. It records where it ran and what it saw there, in a file named
 // after the commit it was given. PROBE_SLEEP keeps it running for that many milliseconds first.
 const probe = `
@@ -73,6 +93,8 @@ function setup(t) {
     'acme-hold': { github: 'acme/acme-hold', ...cmd(`pwd > ${JSON.stringify(join(s.root, 'hold.cwd'))}; sleep 30 & echo $! > ${JSON.stringify(join(s.root, 'hold.pid'))}; wait`) },
     'acme-amp': { github: 'acme/acme-amp', checks: ['checks'], baseBranch: 'main', deploy: { kind: 'amplify', appId: 'd1acme', region: 'eu-west-1', profile: 'acme-deploy' } },
     'acme-gha': { github: 'acme/acme-gha', checks: ['checks'], deploy: { kind: 'github-actions', workflow: 'deploy' } },
+    'acme-gha-main': { github: 'acme/acme-gha', checks: ['checks'], baseBranch: 'main', deploy: { kind: 'github-actions', workflow: 'deploy' } },
+    'acme-gha-id': { github: 'acme/acme-gha', checks: ['checks'], baseBranch: 'main', deploy: { kind: 'github-actions', workflow: '7' } },
     // A shell that starts a program in the background and waits for it, so a timeout must stop
     // the whole process group to stop the program.
     'acme-slow': { github: 'acme/acme-slow', ...cmd(`pwd > ${JSON.stringify(join(s.root, 'slow.cwd'))}; sleep 30 & echo $! > ${JSON.stringify(join(s.root, 'child.pid'))}; wait`) },
@@ -83,7 +105,7 @@ function setup(t) {
   const probeOut = join(s.root, 'probe-out');
   const seen = (c) => JSON.parse(readFileSync(`${probeOut}.${c}`, 'utf8'));
   s.fake('aws', fakeSeq);
-  s.fake('gh', fakeSeq);
+  s.fake('gh', fakeGh);
   const seqFile = join(s.root, 'seq.json');
   const logFile = join(s.root, 'log.jsonl');
   const seq = (answers) => {
@@ -92,7 +114,13 @@ function setup(t) {
     writeFileSync(logFile, '');
   };
   const log = () => readFileSync(logFile, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
-  const env = (more = {}) => ({ FAKE_SEQ: seqFile, FAKE_LOG: logFile, PROBE_OUT: probeOut, EXPECT: git['acme-cmd'].c2, ...more });
+  const apiFile = join(s.root, 'api.json');
+  const api = (fixture) => {
+    writeFileSync(apiFile, JSON.stringify(fixture));
+    writeFileSync(logFile + '.api', '');
+  };
+  const apiLog = () => (existsSync(logFile + '.api') ? readFileSync(logFile + '.api', 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
+  const env = (more = {}) => ({ FAKE_SEQ: seqFile, FAKE_LOG: logFile, FAKE_API: apiFile, PROBE_OUT: probeOut, EXPECT: git['acme-cmd'].c2, ...more });
   const wait = (repo, c = commit, ...a) => s.run(['deploy-wait', 'acme-shop', repo, c, '--interval', '1', ...a], env());
   // The same call, started without waiting for it, for overlapping calls and signals.
   const start = (repo, c, more = {}) => {
@@ -102,7 +130,7 @@ function setup(t) {
     const done = new Promise((res) => child.on('close', (code) => res({ status: code, json: JSON.parse(out) })));
     return { child, done };
   };
-  return { s, seq, log, wait, start, git, seen };
+  return { s, seq, log, api, apiLog, wait, start, git, seen };
 }
 
 test('a repo without a deploy returns at once', (t) => {
@@ -458,6 +486,267 @@ test('a node_modules clone killed on its own is a failed checkout, and the comma
   assert.match(r.json.detail, /the copy got SIGKILL/);
   assert.equal(existsSync(join(f.s.root, `probe-out.${g.c2}`)), false);
   assert.equal(worktrees(g.work).length, 1);
+});
+
+// The GitHub API answers for a deploy workflow with this text and a commit that changes these files.
+const WF = '.github/workflows/deploy.yml';
+// The commit is the squash merge of pull request 5 into main, and its parent came from pull request 4.
+const pr = (number, sha, base = 'main') => ({ number, merged_at: '2026-11-06T10:00:00Z', merge_commit_sha: sha, base: { ref: base } });
+function workflowApi(yaml, files, { workflows, parents, prs, parentPrs, heads, tags } = {}) {
+  return {
+    'repos/acme/acme-gha/actions/workflows': { total_count: 1, workflows: workflows ?? [{ id: 7, name: 'deploy', path: WF }] },
+    [`repos/acme/acme-gha/contents/${WF}`]: { encoding: 'base64', content: Buffer.from(yaml).toString('base64') },
+    [`repos/acme/acme-gha/commits/${commit}`]: { sha: commit, parents: parents ?? [{ sha: other }], files: files.map((name) => (typeof name === 'string' ? { filename: name } : name)) },
+    [`repos/acme/acme-gha/commits/${commit}/pulls`]: prs ?? [pr(5, commit)],
+    [`repos/acme/acme-gha/commits/${other}/pulls`]: parentPrs ?? [pr(4, other)],
+    [`repos/acme/acme-gha/commits/${commit}/branches-where-head`]: heads ?? [{ name: 'main' }],
+    'repos/acme/acme-gha/tags': tags ?? [{ name: 'v0.1.0', commit: { sha: other } }],
+  };
+}
+const pathsYaml = (list, key = 'paths') => `name: deploy\non:\n  push:\n    branches: [main]\n    ${key}:\n${list.map((p) => `      - '${p}'`).join('\n')}\n  workflow_dispatch:\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n`;
+const runDone = (id) => ({ databaseId: id, status: 'completed', conclusion: 'success', headSha: commit, url: `https://example.invalid/run/${id}`, createdAt: '2026-11-06T10:00:00Z' });
+const runList = (f) => f.log().filter((c) => c.argv[0] === 'run');
+const apiPaths = (f) => f.apiLog().map((a) => a[0].split('?')[0]);
+
+test('a github-actions deploy whose push filter matches the merge waits for the run', { skip: fakesSkip }, (t) => {
+  const f = setup(t);
+  f.api(workflowApi(pathsYaml(['src/**']), ['src/app.js', 'README.md']));
+  f.seq([{ out: [] }, { out: [{ ...runDone(31), status: 'in_progress', conclusion: '' }] }, { out: [runDone(31)] }]);
+  const r = f.wait('acme-gha-main');
+  assert.equal(r.status, 0, r.stdout);
+  assert.equal(r.json.runId, 31);
+  assert.equal(r.json.status, 'succeeded');
+  assert.equal(r.json.filter.answer, 'runs');
+  assert.match(r.json.filter.reason, /src\/app\.js matches paths/);
+  assert.ok(apiPaths(f).includes(`repos/acme/acme-gha/contents/${WF}`));
+  assert.equal(f.apiLog().find((a) => a[0].startsWith('repos/acme/acme-gha/contents/'))[0].split('?')[1], `ref=${commit}`);
+});
+
+test('a github-actions deploy whose push filter excludes the merge succeeds at once with a note', { skip: fakesSkip }, (t) => {
+  const f = setup(t);
+  f.api(workflowApi(pathsYaml(['src/**']), ['docs/guide.md']));
+  f.seq([{ out: [] }]);
+  const r = f.wait('acme-gha-main');
+  assert.equal(r.status, 0, r.stdout);
+  assert.equal(r.json.status, 'succeeded');
+  assert.equal(r.json.kind, 'github-actions');
+  assert.equal(r.json.ref, 'none');
+  assert.equal(r.json.runId, null);
+  assert.equal(r.json.workflowFile, WF);
+  assert.equal(r.json.filter.answer, 'does-not-run');
+  assert.match(r.json.note, /no run was started: \.github\/workflows\/deploy\.yml does not run for this push, since no changed file matches paths/);
+  // One look for a run, and no wait.
+  assert.equal(runList(f).length, 1);
+});
+
+test('a github-actions deploy whose workflow has no path filter waits without reading the files', { skip: fakesSkip }, (t) => {
+  const f = setup(t);
+  f.api(workflowApi('name: deploy\non: push\njobs: {}\n', ['docs/guide.md']));
+  f.seq([{ out: [] }, { out: [runDone(32)] }]);
+  const r = f.wait('acme-gha');
+  assert.equal(r.status, 0, r.stdout);
+  assert.equal(r.json.runId, 32);
+  assert.equal(r.json.filter.answer, 'runs');
+  assert.ok(!apiPaths(f).some((p) => p.includes('/commits/')));
+});
+
+test('paths-ignore and a ! negation decide like GitHub', { skip: fakesSkip }, (t) => {
+  const f = setup(t);
+  f.api(workflowApi(pathsYaml(['docs/**', '*.md'], 'paths-ignore'), ['docs/a.md', 'NOTES.md']));
+  f.seq([{ out: [] }]);
+  let r = f.wait('acme-gha-main');
+  assert.equal(r.json.filter.answer, 'does-not-run');
+  assert.equal(r.json.status, 'succeeded');
+  f.api(workflowApi(pathsYaml(['docs/**', '*.md'], 'paths-ignore'), ['docs/a.md', 'src/b.js']));
+  f.seq([{ out: [runDone(33)] }]);
+  r = f.wait('acme-gha-main');
+  assert.equal(r.json.filter.answer, 'runs');
+  assert.equal(r.json.runId, 33);
+  f.api(workflowApi(pathsYaml(['src/**', '!src/**/*.md']), ['src/notes/readme.md']));
+  f.seq([{ out: [] }]);
+  r = f.wait('acme-gha-main');
+  assert.equal(r.json.filter.answer, 'does-not-run');
+  f.api(workflowApi(pathsYaml(['src/**', '!src/**/*.md']), ['src/notes/readme.md', 'src/app.js']));
+  f.seq([{ out: [runDone(34)] }]);
+  r = f.wait('acme-gha-main');
+  assert.equal(r.json.filter.answer, 'runs');
+  assert.equal(r.json.runId, 34);
+});
+
+test('a filter that excludes the merge still waits for a run that is there after all', { skip: fakesSkip }, (t) => {
+  const f = setup(t);
+  f.api(workflowApi(pathsYaml(['src/**']), ['docs/guide.md']));
+  f.seq([{ out: [{ ...runDone(35), status: 'queued', conclusion: '' }] }, { out: [runDone(35)] }]);
+  const r = f.wait('acme-gha-main');
+  assert.equal(r.status, 0, r.stdout);
+  assert.equal(r.json.runId, 35);
+  assert.equal(r.json.filter.answer, 'does-not-run');
+  assert.equal(r.json.note, undefined);
+});
+
+test('a branch filter that excludes the pull request base succeeds at once', { skip: fakesSkip }, (t) => {
+  const f = setup(t);
+  const yaml = "on:\n  push:\n    branches:\n    - 'release/**'\n";
+  f.api(workflowApi(yaml, ['src/app.js']));
+  f.seq([{ out: [] }]);
+  let r = f.wait('acme-gha');
+  assert.equal(r.status, 0, r.stdout);
+  assert.equal(r.json.filter.answer, 'does-not-run');
+  assert.match(r.json.filter.reason, /the branch filter excludes main/);
+  // The files are not needed for a branch filter alone.
+  assert.ok(!f.apiLog().some((a) => a[0].startsWith(`repos/acme/acme-gha/commits/${commit}?`)));
+  // The base comes from the pull request, never from the config or the remote.
+  f.api(workflowApi(yaml, ['src/app.js'], { prs: [pr(5, commit, 'release/2')], heads: [{ name: 'release/2' }] }));
+  f.seq([{ out: [runDone(42)] }]);
+  r = f.wait('acme-gha-main');
+  assert.equal(r.json.filter.answer, 'runs');
+  assert.equal(r.json.runId, 42);
+});
+
+test('a commit that is not one squash merged pull request gives unknown and waits', { skip: fakesSkip }, (t) => {
+  const f = setup(t);
+  const yaml = pathsYaml(['src/**']);
+  // No merged pull request, as for a direct push of several commits.
+  f.api(workflowApi(yaml, ['docs/guide.md'], { prs: [] }));
+  f.seq([{ out: [] }]);
+  let r = f.wait('acme-gha-main', commit, '--timeout', '0.2');
+  assert.equal(r.json.status, 'timeout');
+  assert.equal(r.json.filter.answer, 'unknown');
+  assert.match(r.json.detail, /no run for this commit yet, and whether the workflow runs for this push is not known: the commit is not the merge commit of one merged pull request/);
+  // A pull request that is open, or merged as another commit.
+  f.api(workflowApi(yaml, ['docs/guide.md'], { prs: [{ ...pr(5, other), merged_at: null }, pr(6, other)] }));
+  f.seq([{ out: [runDone(43)] }]);
+  r = f.wait('acme-gha-main');
+  assert.equal(r.json.filter.answer, 'unknown');
+  // A rebase merge of several commits: the parent belongs to the same pull request.
+  f.api(workflowApi(yaml, ['docs/guide.md'], { parentPrs: [pr(5, commit)] }));
+  f.seq([{ out: [runDone(44)] }]);
+  r = f.wait('acme-gha-main');
+  assert.equal(r.json.filter.answer, 'unknown');
+  assert.match(r.json.filter.reason, /not merged as one commit/);
+  // The commit was pushed on to another branch too, as in a promotion to release.
+  f.api(workflowApi(yaml, ['docs/guide.md'], { heads: [{ name: 'main' }, { name: 'release' }] }));
+  f.seq([{ out: [runDone(46)] }]);
+  r = f.wait('acme-gha-main');
+  assert.equal(r.json.filter.answer, 'unknown');
+  assert.match(r.json.filter.reason, /head of another branch/);
+  // A base that has moved on already leaves no branch with the commit as its head, which is fine.
+  f.api(workflowApi(yaml, ['docs/guide.md'], { heads: [] }));
+  f.seq([{ out: [] }]);
+  r = f.wait('acme-gha-main');
+  assert.equal(r.json.filter.answer, 'does-not-run');
+});
+
+test('a path filter without a branch filter checks for a tag on the commit, since a tag push ignores paths', { skip: fakesSkip }, (t) => {
+  const f = setup(t);
+  const yaml = "on:\n  push:\n    paths: ['src/**']\n";
+  f.api(workflowApi(yaml, ['docs/guide.md']));
+  f.seq([{ out: [] }]);
+  let r = f.wait('acme-gha');
+  assert.equal(r.status, 0, r.stdout);
+  assert.equal(r.json.filter.answer, 'does-not-run');
+  assert.ok(apiPaths(f).includes('repos/acme/acme-gha/tags'));
+  // A tag pushed before the call whose run GitHub does not show yet.
+  f.api(workflowApi(yaml, ['docs/guide.md'], { tags: [{ name: 'v0.2.0', commit: { sha: commit } }] }));
+  f.seq([{ out: [] }]);
+  r = f.wait('acme-gha', commit, '--timeout', '0.2');
+  assert.equal(r.json.status, 'timeout');
+  assert.equal(r.json.filter.answer, 'unknown');
+  assert.match(r.json.filter.reason, /a tag points at the commit/);
+  // A tag list that cannot be read gives unknown too.
+  const api = workflowApi(yaml, ['docs/guide.md']);
+  api['repos/acme/acme-gha/tags'] = { fail: 'HTTP 500' };
+  f.api(api);
+  f.seq([{ out: [runDone(47)] }]);
+  r = f.wait('acme-gha');
+  assert.equal(r.json.filter.answer, 'unknown');
+  assert.equal(r.json.runId, 47);
+});
+
+test('a workflow with another trigger or an unreadable on key waits as before', { skip: fakesSkip }, (t) => {
+  const f = setup(t);
+  const both = "on:\n  push:\n    paths: ['src/**']\n  workflow_run:\n    workflows: [ci]\n    types: [completed]\n";
+  f.api(workflowApi(both, ['docs/guide.md']));
+  f.seq([{ out: [] }]);
+  let r = f.wait('acme-gha-main', commit, '--timeout', '0.2');
+  assert.equal(r.json.status, 'timeout');
+  assert.equal(r.json.filter.answer, 'unknown');
+  assert.match(r.json.detail, /the workflow also runs on workflow_run/);
+  f.api(workflowApi("x: &p ['src/**']\non:\n  push:\n    paths: *p\n", ['docs/guide.md']));
+  f.seq([{ out: [] }, { out: [runDone(36)] }]);
+  r = f.wait('acme-gha-main');
+  assert.equal(r.json.filter.answer, 'unknown');
+  assert.equal(r.json.runId, 36);
+});
+
+test('the workflow is found by its id, and a selector that matches no workflow waits as before', { skip: fakesSkip }, (t) => {
+  const f = setup(t);
+  f.api(workflowApi(pathsYaml(['src/**']), ['docs/guide.md'], { workflows: [{ id: 7, name: 'Deploy to production', path: WF }, { id: 8, name: 'ci', path: '.github/workflows/ci.yml' }] }));
+  f.seq([{ out: [] }]);
+  // acme-gha-id names the workflow by its id, 7.
+  let r = f.wait('acme-gha-id');
+  assert.equal(r.status, 0, r.stdout);
+  assert.equal(r.json.filter.answer, 'does-not-run');
+  assert.equal(r.json.workflowFile, WF);
+  // The name in acme-gha is deploy, which no workflow is called here.
+  f.seq([{ out: [runDone(37)] }]);
+  r = f.wait('acme-gha');
+  assert.equal(r.json.filter.answer, 'unknown');
+  assert.equal(r.json.filter.reason, 'no workflow matches deploy');
+  assert.equal(r.json.runId, 37);
+  assert.equal(runList(f)[0].argv[runList(f)[0].argv.indexOf('--workflow') + 1], 'deploy');
+});
+
+test('a failing gh api call, more than 300 files or a merge commit gives unknown and waits', { skip: fakesSkip }, (t) => {
+  const f = setup(t);
+  f.api({ 'repos/acme/acme-gha/actions/workflows': { fail: 'HTTP 403: rate limit' } });
+  f.seq([{ out: [runDone(38)] }]);
+  let r = f.wait('acme-gha-main');
+  assert.equal(r.json.filter.answer, 'unknown');
+  assert.match(r.json.filter.reason, /gh failed: HTTP 403/);
+  assert.equal(r.json.runId, 38);
+  const many = Array.from({ length: 301 }, (_, i) => `docs/${i}.md`);
+  const api = workflowApi(pathsYaml(['src/**']), []);
+  api[`repos/acme/acme-gha/commits/${commit}`] = { pages: [0, 1, 2, 3].map((p) => ({ sha: commit, parents: [{ sha: other }], files: many.slice(p * 100, p * 100 + 100).map((filename) => ({ filename })) })) };
+  f.api(api);
+  f.seq([{ out: [runDone(39)] }]);
+  r = f.wait('acme-gha-main');
+  assert.equal(r.json.filter.answer, 'unknown');
+  assert.match(r.json.filter.reason, /more than 300 files/);
+  f.api(workflowApi(pathsYaml(['src/**']), ['docs/guide.md'], { parents: [{ sha: other }, { sha: commit }] }));
+  f.seq([{ out: [runDone(40)] }]);
+  r = f.wait('acme-gha-main');
+  assert.equal(r.json.filter.answer, 'unknown');
+  assert.match(r.json.filter.reason, /not a single parent commit/);
+  // A renamed file counts under its old name too.
+  f.api(workflowApi(pathsYaml(['src/**']), [{ filename: 'docs/moved.js', previous_filename: 'src/moved.js' }]));
+  f.seq([{ out: [runDone(41)] }]);
+  r = f.wait('acme-gha-main');
+  assert.equal(r.json.filter.answer, 'runs');
+});
+
+test('the workflow list is read page by page, a missing file gives unknown, and a failing run list is gh-failed', { skip: fakesSkip }, (t) => {
+  const f = setup(t);
+  const filler = Array.from({ length: 100 }, (_, i) => ({ id: 100 + i, name: `ci ${i}`, path: `.github/workflows/ci-${i}.yml` }));
+  const api = workflowApi(pathsYaml(['src/**']), ['docs/guide.md']);
+  api['repos/acme/acme-gha/actions/workflows'] = { pages: [{ workflows: filler }, { workflows: [{ id: 7, name: 'deploy', path: WF }] }] };
+  f.api(api);
+  f.seq([{ out: [] }]);
+  let r = f.wait('acme-gha');
+  assert.equal(r.json.filter.answer, 'does-not-run');
+  assert.equal(f.apiLog().filter((a) => a[0].startsWith('repos/acme/acme-gha/actions/workflows')).length, 2);
+  delete api[`repos/acme/acme-gha/contents/${WF}`];
+  f.api(api);
+  f.seq([{ out: [runDone(45)] }]);
+  r = f.wait('acme-gha');
+  assert.equal(r.json.filter.answer, 'unknown');
+  assert.match(r.json.filter.reason, /HTTP 404/);
+  f.api(workflowApi(pathsYaml(['src/**']), ['docs/guide.md']));
+  f.seq([{ fail: 'gh: HTTP 502' }]);
+  r = f.wait('acme-gha');
+  assert.equal(r.status, 1);
+  assert.equal(r.json.failure, 'gh-failed');
+  assert.equal(r.json.filter.answer, 'does-not-run');
 });
 
 test('deploy-wait checks its arguments', (t) => {
