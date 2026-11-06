@@ -4,10 +4,10 @@ import { disposableMatcher, disposableProblem } from '../lib/disposable.mjs';
 
 test('disposable patterns match from the repo root, with * within a name, ** for folders and / for a folder only', () => {
   const m = disposableMatcher(['dist/', 'packages/*/dist/', '**/*.tsbuildinfo', 'coverage', 'out/**']);
-  for (const yes of ['dist/', 'dist/a.js', 'dist/sub/b.js', 'packages/acme-ui/dist/', 'packages/acme-ui/dist/x.js', 'tsconfig.tsbuildinfo', 'packages/acme-ui/tsconfig.tsbuildinfo', 'coverage', 'coverage/', 'coverage/lcov.info', 'out/x', 'out/a/b']) {
+  for (const yes of ['dist/', 'dist/a.js', 'dist/sub/b.js', 'packages/acme-ui/dist/', 'packages/acme-ui/dist/x.js', 'tsconfig.tsbuildinfo', 'packages/acme-ui/tsconfig.tsbuildinfo', 'coverage', 'coverage/', 'coverage/lcov.info', 'out/', 'out/x', 'out/a/b']) {
     assert.equal(m(yes), true, yes);
   }
-  for (const no of ['dist', 'src/dist/', 'packages/a/b/dist/', 'distx/', 'acme.env', 'build/', 'cache/', 'a.tsbuildinfo.bak', 'out/', 'coverage.txt', 'packages/acme-ui/', 'packages/dist/']) {
+  for (const no of ['dist', 'src/dist/', 'packages/a/b/dist/', 'distx/', 'acme.env', 'build/', 'cache/', 'a.tsbuildinfo.bak', 'out', 'coverage.txt', 'packages/acme-ui/', 'packages/dist/']) {
     assert.equal(m(no), false, no);
   }
   // A file pattern never makes a folder disposable because of what it holds.
@@ -22,17 +22,21 @@ test('disposable patterns match from the repo root, with * within a name, ** for
   assert.equal(mid('src/gen/'), true);
   assert.equal(mid('src/a/b/gen/'), true);
   assert.equal(mid('src/a/gen.js'), false);
+  // A final /** names the folder, at any depth of ** before it.
+  assert.equal(disposableMatcher(['a/**/**'])('a/'), true);
+  assert.equal(disposableMatcher(['a/**/**'])('a'), false);
 });
 
 test('a disposable pattern that could match real work or reads another way is refused', () => {
-  for (const ok of ['dist/', '**/*.tsbuildinfo', 'packages/*/dist/', 'out/**', 'a b/c', '.cache/']) assert.equal(disposableProblem(ok), null, ok);
+  for (const ok of ['dist/', '**/*.tsbuildinfo', 'packages/*/dist/', 'out/**', 'dist/*', 'a b/c', '.cache/', '**/*.log']) assert.equal(disposableProblem(ok), null, ok);
   const cases = [
-    [undefined, /not empty/], [3, /not empty/], ['', /not empty/], ['  ', /not empty/], [' dist/', /space/],
+    [undefined, /in quotes/], [3, /in quotes/], [null, /in quotes/], ['', /not empty/], ['  ', /not empty/], [' dist/', /space/],
     ['/dist', /relative/], ['~/dist', /relative/],
     ['dist?', /only \* and \*\*/], ['[ab]', /only/], ['{a,b}', /only/], ['!dist', /only/], ['a\\b', /only/],
     ['a//b', /empty folder name/], ['dist//', /empty folder name/], ['./dist', /\. or \.\./], ['a/../b', /\. or \.\./],
     ['a**', /whole folder name/], ['**.js', /whole folder name/],
     ['*', /anything/], ['**', /anything/], ['**/*', /anything/], ['*/', /anything/], ['**/', /anything/], ['*/*', /anything/], ['**/**', /anything/],
+    ['*.*', /letter or digit/], ['.*', /letter or digit/], ['**/*.*', /letter or digit/], ['**/.*', /letter or digit/], ['*-*', /letter or digit/], ['_*/', /letter or digit/],
   ];
   for (const [p, want] of cases) assert.match(disposableProblem(p) ?? 'null', want, String(p));
 });

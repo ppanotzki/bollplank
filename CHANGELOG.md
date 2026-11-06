@@ -2,7 +2,8 @@
 
 ## 0.5.0 (2026-11-06)
 
-- A repo can list `disposable` paths in the config, such as `["dist/", "**/*.tsbuildinfo"]`. `bollplank ticket remove` deletes ignored files that match without asking and names them in its output, so build output the gates made no longer stops every acceptance. Any other ignored file still refuses as before, and `--force-ignored` still deletes all of them. Patterns are matched from the repo root, with `*` within a folder name, `**` for zero or more folders and a trailing `/` for a folder only. Validation refuses absolute paths, `..`, other glob characters and patterns that match everything.
+- A repo can list `disposable` paths in the config, such as `["dist/", "**/*.tsbuildinfo"]`. `bollplank ticket remove` deletes ignored files that match without asking and names them in its output, so build output the gates made no longer stops every acceptance. Any other ignored file still refuses as before, and `--force-ignored` still deletes all of them. Patterns are matched from the repo root, with `*` within a folder name, `**` for zero or more folders and a trailing `/` for a folder only. Validation refuses absolute paths, `..`, other glob characters and patterns without a letter or digit, such as `*.*`, which match almost anything.
+- `ticket remove` now asks git for untracked files even when the repo or the person sets `status.showUntrackedFiles=no`. Before, that setting hid untracked and ignored files from the check, so remove could delete them without asking.
 
 ## 0.4.1 (2026-11-06)
 

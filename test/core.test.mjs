@@ -131,7 +131,7 @@ test('validation names each problem and never accepts a repo without checks', ()
   const dis = example();
   dis.projects['acme-shop'].repos['acme-api'].disposable = ['dist/', '**/*', '/tmp', '../x', ''];
   const dp = validate(dis).join('\n');
-  assert.match(dp, /repos\.acme-api\.disposable\[1\]: matches whole folders of anything/);
+  assert.match(dp, /repos\.acme-api\.disposable\[1\]: needs a letter or digit/);
   assert.match(dp, /disposable\[2\]: must be relative to the repo root/);
   assert.match(dp, /disposable\[3\]: must not hold a \. or \.\. folder/);
   assert.match(dp, /disposable\[4\]: must be a pattern, not empty/);

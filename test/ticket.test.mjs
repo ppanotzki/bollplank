@@ -248,6 +248,33 @@ test('remove deletes the repo\'s disposable ignored paths without asking, names 
   assert.equal(r.status, 0, r.stdout);
   assert.deepEqual(r.json.disposable, { 'acme-api': ['build/', 'pkg/tsconfig.tsbuildinfo', 'tsconfig.tsbuildinfo'] });
   assert.equal(existsSync(wt), false);
+  // --force-ignored still deletes every ignored file, and the output names only the disposable ones.
+  f.ticket('create', 'acme-shop', 'ACME-12', '--slug', 'x', '--change', 'acme-api');
+  const wt2 = join(f.folder('ACME-12'), 'acme-api');
+  mkdirSync(join(wt2, 'build'));
+  writeFileSync(join(wt2, 'build', 'out.txt'), 'out\n');
+  writeFileSync(join(wt2, 'acme.env'), 'ACME_SETTING=1\n');
+  r = f.ticket('remove', 'acme-shop', 'ACME-12', '--force-ignored');
+  assert.equal(r.status, 0, r.stdout);
+  assert.deepEqual(r.json.disposable, { 'acme-api': ['build/'] });
+  assert.equal(existsSync(wt2), false);
+});
+
+test('remove sees untracked and ignored files even when status.showUntrackedFiles is no', (t) => {
+  const f = setup(t);
+  f.ticket('create', 'acme-shop', 'ACME-11', '--slug', 'x', '--change', 'acme-api');
+  const wt = join(f.folder('ACME-11'), 'acme-api');
+  f.repos['acme-api'].git('config', 'status.showUntrackedFiles', 'no');
+  writeFileSync(join(wt, 'draft.md'), 'work\n');
+  let r = f.ticket('remove', 'acme-shop', 'ACME-11');
+  assert.equal(r.status, 1, r.stdout);
+  assert.match(r.json.refusals[0], /acme-api: uncommitted or untracked changes/);
+  rmSync(join(wt, 'draft.md'));
+  writeFileSync(join(f.repos['acme-api'].work, '.git', 'info', 'exclude'), 'acme.env\n');
+  writeFileSync(join(wt, 'acme.env'), 'ACME_SETTING=1\n');
+  r = f.ticket('remove', 'acme-shop', 'ACME-11');
+  assert.equal(r.status, 1, r.stdout);
+  assert.deepEqual(r.json.ignored, { 'acme-api': ['acme.env'] });
 });
 
 test('remove without disposable paths gives the same output as before', (t) => {
