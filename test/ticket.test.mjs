@@ -325,6 +325,13 @@ function withSubmodules(t, ticketId, disposable) {
   return { ...f, lib, deep, wt, libDir: join(wt, 'lib'), deepDir: join(wt, 'lib', 'deep'), init: () => sub(wt, 'submodule', 'update', '-q', '--init', '--recursive') };
 }
 const remove = (f, id, ...extra) => f.ticket('remove', 'acme-shop', id, ...extra);
+// A depth 1 clone of lib. A plain path ignores --depth, so the url is file://.
+function shallowInit(f) {
+  sub(f.wt, 'submodule', 'init', 'lib');
+  g(f.wt, 'config', 'submodule.lib.url', `file://${f.lib.origin}`);
+  sub(f.wt, 'submodule', 'update', '-q', '--depth', '1', 'lib');
+  assert.equal(g(f.libDir, 'rev-parse', '--is-shallow-repository'), 'true');
+}
 
 test('remove lists ignored files inside a submodule from the repo root and deletes them only with --force-ignored', (t) => {
   const f = withSubmodules(t, 'ACME-20');
@@ -532,7 +539,7 @@ test('remove counts a shallow submodule\'s boundary and a commit on a remote tag
   const recorded = f.lib.git('rev-parse', 'HEAD');
   f.lib.commit('next.txt', 'next\n');
   f.lib.git('push', '-q', 'origin', 'main');
-  sub(f.wt, 'submodule', 'update', '-q', '--init', '--depth', '1', 'lib');
+  shallowInit(f);
   assert.equal(g(f.libDir, 'rev-parse', 'HEAD'), recorded);
   writeFileSync(join(f.libDir, 'acme.env'), 'ACME_SETTING=1\n');
   let r = remove(f, 'ACME-33');
@@ -561,4 +568,52 @@ test('remove refuses a submodule that has linked worktrees of its own', (t) => {
   const r = remove(f, 'ACME-34');
   assert.equal(r.status, 1, r.stdout);
   assert.deepEqual(r.json.refusals, ['acme-api: lib: has linked worktrees that removal would break']);
+});
+
+test('remove refuses a shallow boundary commit that upstream rewrote away', (t) => {
+  const f = withSubmodules(t, 'ACME-35');
+  shallowInit(f);
+  // Upstream replaces main with a new history that does not hold the recorded commit.
+  f.lib.git('checkout', '-q', '--orphan', 'fresh');
+  f.lib.commit('fresh.txt', 'fresh\n');
+  f.lib.git('push', '-q', '-f', 'origin', 'fresh:main');
+  const r = remove(f, 'ACME-35');
+  assert.equal(r.status, 1, r.stdout);
+  assert.equal(r.json.refusals.length, 1, r.stdout);
+  assert.match(r.json.refusals[0], /^acme-api: lib: (\d+ commits on no remote of the submodule|could not check the submodule: )/);
+  assert.ok(existsSync(f.libDir));
+});
+
+test('remove refuses commits only a stale remote branch outside a narrowed fetch refspec holds', (t) => {
+  const f = withSubmodules(t, 'ACME-36');
+  f.init();
+  const recorded = g(f.libDir, 'rev-parse', 'HEAD');
+  g(f.libDir, 'checkout', '-q', '-b', 'topic');
+  writeFileSync(join(f.libDir, 'topic.txt'), 'topic\n');
+  g(f.libDir, 'add', 'topic.txt');
+  g(f.libDir, 'commit', '-q', '-m', 'topic');
+  g(f.libDir, 'push', '-q', 'origin', 'topic');
+  g(f.libDir, 'checkout', '-q', '--detach', recorded);
+  g(f.libDir, 'config', 'remote.origin.fetch', '+refs/heads/main:refs/remotes/origin/main');
+  execFileSync('git', ['--git-dir', f.lib.origin, 'branch', '-q', '-D', 'topic']);
+  const r = remove(f, 'ACME-36');
+  assert.equal(r.status, 1, r.stdout);
+  assert.ok(g(f.libDir, 'rev-parse', '--verify', '--quiet', 'refs/remotes/origin/topic'));
+  assert.deepEqual(r.json.refusals, ['acme-api: lib: 1 commits on no remote of the submodule']);
+});
+
+test('remove refuses a deinitialized submodule git folder that git cannot read', (t) => {
+  const f = withSubmodules(t, 'ACME-37');
+  f.init();
+  g(f.libDir, 'checkout', '-q', '-b', 'side');
+  writeFileSync(join(f.libDir, 'side.txt'), 'side\n');
+  g(f.libDir, 'add', 'side.txt');
+  g(f.libDir, 'commit', '-q', '-m', 'side');
+  g(f.wt, 'submodule', 'deinit', '-q', '-f', 'lib');
+  const modules = join(g(f.wt, 'rev-parse', '--absolute-git-dir'), 'modules', 'lib');
+  rmSync(join(modules, 'HEAD'));
+  const r = remove(f, 'ACME-37');
+  assert.equal(r.status, 1, r.stdout);
+  assert.ok(r.json.refusals.some((x) => x.startsWith('acme-api: lib (no checkout): could not check the submodule: ')), r.stdout);
+  assert.ok(existsSync(join(modules, 'refs', 'heads', 'side')));
 });
