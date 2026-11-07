@@ -143,7 +143,7 @@ bollplank run log <project> <TICKET> --event <text>
 bollplank run show <project> <TICKET>
 ```
 
-`--linear-readback` is another name for `--board-readback`. `--agents` must resolve to the project's `<source>/AGENTS.md` and not be empty. The baseline keeps a copy and its sha256 as `agents`, which `run show` prints, and a rebaseline without `--agents` carries the latest copy forward. A run started without it has `agents: null`. These modes read the critic from the brief file's `Critic:` line. Failures: `usage`, `ticket-not-enabled`, `runs-disabled`, `no-run`, `stage-incomplete`, `refused`, `config` and `corrupt`.
+`--linear-readback` is another name for `--board-readback`. `--agents` must resolve to the project's `<source>/AGENTS.md`, stay inside the source folder, and be readable and not empty. The baseline keeps a copy and its sha256 as `agents`, which `run show` prints, and a rebaseline without `--agents` carries the latest copy forward. A run started without it has `agents` null or missing. These modes read the critic from the brief file's `Critic:` line. Failures: `usage`, `ticket-not-enabled`, `runs-disabled`, `no-run`, `stage-incomplete`, `refused`, `config` and `corrupt`.
 
 ## Shipping
 

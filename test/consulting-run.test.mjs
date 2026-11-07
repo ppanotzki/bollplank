@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -230,6 +230,39 @@ test('--agents must be the AGENTS.md in the source folder and must not be empty'
   writeFileSync(agents, 'Text\n');
   assert.throws(() => f.run('init', { ...base, agents }), /no source configured/);
   assert.equal(existsSync(join(f.profile.tickets, 'ACME-5', '.run.json')), false);
+});
+
+test('--agents refuses a link out of the source folder and an unreadable file', { skip: process.platform === 'win32' || process.getuid?.() === 0 ? 'needs symlinks and file modes' : false }, (t) => {
+  const f = fixture(t);
+  const agents = withAgents(f);
+  const base = { brief: f.brief, approval: 'synthetic approval', instruction: 'synthetic explicit run', review: 'both', 'board-readback': f.live };
+  chmodSync(agents, 0o000);
+  assert.throws(() => f.run('init', { ...base, agents }), (e) => e.failure === 'refused' && /cannot be read/.test(e.message));
+  chmodSync(agents, 0o644);
+  const shared = join(f.root, 'shared-rules.md');
+  writeFileSync(shared, 'Shared rules.\n');
+  rmSync(agents);
+  symlinkSync(shared, agents);
+  assert.throws(() => f.run('init', { ...base, agents }), /outside the source folder/);
+  assert.equal(existsSync(join(f.profile.tickets, 'ACME-5', '.run.json')), false);
+});
+
+test('a record from before --agents existed rebaselines with and without it', (t) => {
+  const f = fixture(t);
+  const agents = withAgents(f, 'Rules.\n');
+  f.init();
+  const file = join(f.profile.tickets, 'ACME-5', '.run.json');
+  const old = JSON.parse(readFileSync(file, 'utf8'));
+  delete old.agents;
+  for (const b of old.baselines) delete b.agents;
+  writeFileSync(file, JSON.stringify(old));
+  assert.equal(f.run('show').record.agents, undefined);
+  const brief2 = f.put('brief2.md', readFileSync(f.brief, 'utf8').replace('Brief v1', 'Brief v2'));
+  const live2 = f.put('live2.json', JSON.stringify({ ...JSON.parse(readFileSync(f.live)), description: readFileSync(brief2, 'utf8'), observedAt: new Date().toISOString() }));
+  assert.equal(f.run('rebaseline', rebaselineArgs(f, { brief: brief2, 'board-readback': live2 })).record.agents, null);
+  const r = f.run('rebaseline', rebaselineArgs(f, { brief: brief2, 'board-readback': live2, agents })).record;
+  assert.equal(r.agents.sha256, sha('Rules.\n'));
+  assert.equal(r.baselines.length, 3);
 });
 
 test('a Git source with a local AGENTS.md change records the local bytes the run reads', (t) => {
