@@ -245,6 +245,12 @@ test('--agents refuses a link out of the source folder and an unreadable file', 
   symlinkSync(shared, agents);
   assert.throws(() => f.run('init', { ...base, agents }), /outside the source folder/);
   assert.equal(existsSync(join(f.profile.tickets, 'ACME-5', '.run.json')), false);
+  // A link to a file inside the source whose name starts with two dots stays inside.
+  const dotted = join(f.profile.source, '..rules.md');
+  writeFileSync(dotted, 'Dotted rules.\n');
+  rmSync(agents);
+  symlinkSync(dotted, agents);
+  assert.equal(f.run('init', { ...base, agents }).record.agents.sha256, sha('Dotted rules.\n'));
 });
 
 test('a record from before --agents existed rebaselines with and without it', (t) => {
