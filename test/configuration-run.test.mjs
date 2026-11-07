@@ -374,3 +374,18 @@ test('a configuration run record that is not valid JSON is a corrupt failure thr
   assert.equal(r.json.failure, 'corrupt');
   assert.match(r.json.detail, /ACME-1 run in .*ops-runs[\\/]ACME-1 could not be read/);
 });
+
+test('a configuration run keeps the AGENTS.md copy and carries it through a rebaseline', (t) => {
+  const f = fixture(t);
+  const source = join(f.root, 'workspace');
+  mkdirSync(source, { recursive: true });
+  f.profile.source = source;
+  writeFileSync(join(source, 'AGENTS.md'), 'Configuration rules.\n');
+  const r = f.run('init', { brief: f.brief, approval: 'https://example.invalid/approval', instruction: 'synthetic run instruction', review: 'plan', 'board-readback': f.live, agents: join(source, 'AGENTS.md') }).record;
+  assert.equal(readFileSync(r.agents.path, 'utf8'), 'Configuration rules.\n');
+  const brief2 = f.put('brief2.md', readFileSync(f.brief, 'utf8').replace('Brief v1', 'Brief v2'));
+  const live2 = f.put('live2.json', JSON.stringify({ ...JSON.parse(readFileSync(f.live)), description: readFileSync(brief2, 'utf8'), observedAt: new Date().toISOString() }));
+  const r2 = f.run('rebaseline', { brief: brief2, approval: 'https://example.invalid/approval', review: 'plan', 'board-readback': live2, reason: 'approved amendment', authorization: 'synthetic human decision', 'scope-evidence': f.proof }).record;
+  assert.equal(r2.agents.sha256, r.agents.sha256);
+  assert.equal(r2.baselines[1].agents.path, join(f.profile.tickets, 'ACME-1', 'baseline-2', 'agents.md'));
+});

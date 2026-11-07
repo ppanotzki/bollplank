@@ -127,6 +127,7 @@ Consulting and configuration projects keep an evidence journal instead ([runs.md
 ```
 bollplank run check <project> <TICKET>
 bollplank run init <project> <TICKET> --brief <file> --approval <ref> --instruction <ref> --review <value> --board-readback <file>
+  [--agents <source>/AGENTS.md]
 bollplank run plan <project> <TICKET> --path <file>
 bollplank run code <project> <TICKET> --path <subject file>            (consulting only)
 bollplank run stage <project> <TICKET> plan|code --revision <sha256> --verdict Approve|Revise --evidence <file>
@@ -137,12 +138,12 @@ bollplank run change <project> <TICKET> --id <operation> --target <alias> --stat
 bollplank run verify <project> <TICKET> --check <name> --status pass|fail --evidence <file>
 bollplank run complete <project> <TICKET>
 bollplank run rebaseline <project> <TICKET> --brief <file> --approval <ref> --review <value> --board-readback <file>
-  --reason <text> --authorization <ref> --scope-evidence <file>
+  --reason <text> --authorization <ref> --scope-evidence <file> [--agents <source>/AGENTS.md]
 bollplank run log <project> <TICKET> --event <text>
 bollplank run show <project> <TICKET>
 ```
 
-`--linear-readback` is another name for `--board-readback`. These modes read the critic from the brief file's `Critic:` line. Failures: `usage`, `ticket-not-enabled`, `runs-disabled`, `no-run`, `stage-incomplete`, `refused`, `config` and `corrupt`.
+`--linear-readback` is another name for `--board-readback`. `--agents` must resolve to the project's `<source>/AGENTS.md` and not be empty. The baseline keeps a copy and its sha256 as `agents`, which `run show` prints, and a rebaseline without `--agents` carries the latest copy forward. A run started without it has `agents: null`. These modes read the critic from the brief file's `Critic:` line. Failures: `usage`, `ticket-not-enabled`, `runs-disabled`, `no-run`, `stage-incomplete`, `refused`, `config` and `corrupt`.
 
 ## Shipping
 
