@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { configurationRun } from '../lib/configuration-run.mjs';
-import { sandbox } from './helpers.mjs';
+import { sandbox, gitRepo } from './helpers.mjs';
 
 function fixture(t, review = 'both', extraHeader = '') {
   const root = mkdtempSync(join(tmpdir(), 'bollplank-consulting-test-'));
@@ -174,4 +175,184 @@ test('the CLI routes consulting runs, reads the approver from config and prints 
   s.config({ approver: { name: 'Ada' }, board: { kind: 'linear' }, projects: { 'acme-advice': { ...project, runs: false } } });
   r = s.run(['run', 'show', 'acme-advice', 'ACME-5']);
   assert.equal(r.json.failure, 'runs-disabled');
+});
+
+// The project's AGENTS.md in its source folder, for the --agents cases.
+function withAgents(f, text = 'Release notes stay on the ticket.\n') {
+  const source = join(f.root, 'workspace');
+  mkdirSync(source, { recursive: true });
+  f.profile.source = source;
+  const agents = join(source, 'AGENTS.md');
+  writeFileSync(agents, text);
+  return agents;
+}
+const sha = (text) => createHash('sha256').update(text).digest('hex');
+const rebaselineArgs = (f, extra = {}) => ({ brief: f.brief, approval: 'synthetic approval', review: 'both', 'board-readback': f.live, reason: 'synthetic amendment', authorization: 'synthetic decision', 'scope-evidence': f.proof, ...extra });
+
+test('init with --agents keeps a copy of the project AGENTS.md and its hash, and show prints them', (t) => {
+  const f = fixture(t);
+  const agents = withAgents(f);
+  const r = f.run('init', { brief: f.brief, approval: 'synthetic approval', instruction: 'synthetic explicit run', review: 'both', 'board-readback': f.live, agents }).record;
+  assert.equal(r.agents.sha256, sha('Release notes stay on the ticket.\n'));
+  assert.equal(r.agents.path, join(f.profile.tickets, 'ACME-5', 'baseline-1', 'agents.md'));
+  assert.equal(readFileSync(r.agents.path, 'utf8'), 'Release notes stay on the ticket.\n');
+  assert.equal(r.baselines[0].agents.sha256, r.agents.sha256);
+  writeFileSync(agents, 'Changed after the start.\n');
+  const shown = f.run('show').record;
+  assert.equal(shown.agents.sha256, r.agents.sha256);
+  assert.equal(f.init().resume, true);
+  assert.deepEqual(f.run('show').record.agents, r.agents);
+});
+
+test('init without --agents still works and records no profile', (t) => {
+  const f = fixture(t);
+  withAgents(f);
+  const r = f.init().record;
+  assert.equal(r.agents, null);
+  assert.equal(r.baselines[0].agents, null);
+});
+
+test('--agents must be the AGENTS.md in the source folder and must not be empty', (t) => {
+  const f = fixture(t);
+  const agents = withAgents(f);
+  const base = { brief: f.brief, approval: 'synthetic approval', instruction: 'synthetic explicit run', review: 'both', 'board-readback': f.live };
+  const nested = join(f.profile.source, 'repos', 'acme-api');
+  mkdirSync(nested, { recursive: true });
+  writeFileSync(join(nested, 'AGENTS.md'), 'A nested repo of its own.\n');
+  assert.throws(() => f.run('init', { ...base, agents: join(nested, 'AGENTS.md') }), /source folder/);
+  assert.throws(() => f.run('init', { ...base, agents: f.proof }), /source folder/);
+  assert.throws(() => f.run('init', { ...base, agents: '' }), /--agents is required/);
+  const link = join(f.root, 'linked-agents.md');
+  symlinkSync(agents, link);
+  writeFileSync(agents, '');
+  assert.throws(() => f.run('init', { ...base, agents: link }), /empty/);
+  delete f.profile.source;
+  writeFileSync(agents, 'Text\n');
+  assert.throws(() => f.run('init', { ...base, agents }), /no source configured/);
+  assert.equal(existsSync(join(f.profile.tickets, 'ACME-5', '.run.json')), false);
+});
+
+test('--agents refuses a link out of the source folder and an unreadable file', { skip: process.platform === 'win32' || process.getuid?.() === 0 ? 'needs symlinks and file modes' : false }, (t) => {
+  const f = fixture(t);
+  const agents = withAgents(f);
+  const base = { brief: f.brief, approval: 'synthetic approval', instruction: 'synthetic explicit run', review: 'both', 'board-readback': f.live };
+  chmodSync(agents, 0o000);
+  assert.throws(() => f.run('init', { ...base, agents }), (e) => e.failure === 'refused' && /cannot be read/.test(e.message));
+  chmodSync(agents, 0o644);
+  const shared = join(f.root, 'shared-rules.md');
+  writeFileSync(shared, 'Shared rules.\n');
+  rmSync(agents);
+  symlinkSync(shared, agents);
+  assert.throws(() => f.run('init', { ...base, agents }), /outside the source folder/);
+  assert.equal(existsSync(join(f.profile.tickets, 'ACME-5', '.run.json')), false);
+  // A link to a file inside the source whose name starts with two dots stays inside.
+  const dotted = join(f.profile.source, '..rules.md');
+  writeFileSync(dotted, 'Dotted rules.\n');
+  rmSync(agents);
+  symlinkSync(dotted, agents);
+  assert.equal(f.run('init', { ...base, agents }).record.agents.sha256, sha('Dotted rules.\n'));
+});
+
+test('a record from before --agents existed rebaselines with and without it', (t) => {
+  const f = fixture(t);
+  const agents = withAgents(f, 'Rules.\n');
+  f.init();
+  const file = join(f.profile.tickets, 'ACME-5', '.run.json');
+  const old = JSON.parse(readFileSync(file, 'utf8'));
+  delete old.agents;
+  for (const b of old.baselines) delete b.agents;
+  writeFileSync(file, JSON.stringify(old));
+  assert.equal(f.run('show').record.agents, undefined);
+  const brief2 = f.put('brief2.md', readFileSync(f.brief, 'utf8').replace('Brief v1', 'Brief v2'));
+  const live2 = f.put('live2.json', JSON.stringify({ ...JSON.parse(readFileSync(f.live)), description: readFileSync(brief2, 'utf8'), observedAt: new Date().toISOString() }));
+  assert.equal(f.run('rebaseline', rebaselineArgs(f, { brief: brief2, 'board-readback': live2 })).record.agents, null);
+  const r = f.run('rebaseline', rebaselineArgs(f, { brief: brief2, 'board-readback': live2, agents })).record;
+  assert.equal(r.agents.sha256, sha('Rules.\n'));
+  assert.equal(r.baselines.length, 3);
+});
+
+test('a Git source with a local AGENTS.md change records the local bytes the run reads', (t) => {
+  const f = fixture(t);
+  const repo = gitRepo(f.root, 'workspace');
+  repo.commit('AGENTS.md', 'Committed rules.\n');
+  repo.git('push', '-q', 'origin', 'main');
+  writeFileSync(join(repo.work, 'AGENTS.md'), 'Uncommitted local rules.\n');
+  f.profile.source = repo.work;
+  const r = f.run('init', { brief: f.brief, approval: 'synthetic approval', instruction: 'synthetic explicit run', review: 'both', 'board-readback': f.live, agents: join(repo.work, 'AGENTS.md') }).record;
+  assert.equal(r.agents.sha256, sha('Uncommitted local rules.\n'));
+  assert.notEqual(r.agents.sha256, sha(repo.git('show', 'origin/main:AGENTS.md') + '\n'));
+});
+
+test('a rebaseline with only a changed AGENTS.md succeeds and keeps the prior copy', (t) => {
+  const f = fixture(t);
+  const agents = withAgents(f, 'First rules.\n');
+  f.run('init', { brief: f.brief, approval: 'synthetic approval', instruction: 'synthetic explicit run', review: 'both', 'board-readback': f.live, agents });
+  assert.throws(() => f.run('rebaseline', rebaselineArgs(f, { agents })), /unchanged/);
+  writeFileSync(agents, 'Second rules.\n');
+  const r = f.run('rebaseline', rebaselineArgs(f, { agents })).record;
+  assert.equal(r.baselines.length, 2);
+  assert.equal(readFileSync(r.baselines[0].agents.path, 'utf8'), 'First rules.\n');
+  assert.equal(r.agents.sha256, sha('Second rules.\n'));
+});
+
+test('a rebaseline without --agents carries the recorded copy forward', (t) => {
+  const f = fixture(t);
+  const agents = withAgents(f, 'Recorded rules.\n');
+  f.run('init', { brief: f.brief, approval: 'synthetic approval', instruction: 'synthetic explicit run', review: 'both', 'board-readback': f.live, agents });
+  writeFileSync(agents, 'Edited later.\n');
+  assert.throws(() => f.run('rebaseline', rebaselineArgs(f)), /unchanged/);
+  const brief2 = f.put('brief2.md', readFileSync(f.brief, 'utf8').replace('Brief v1', 'Brief v2'));
+  const live2 = f.put('live2.json', JSON.stringify({ ...JSON.parse(readFileSync(f.live)), description: readFileSync(brief2, 'utf8'), observedAt: new Date().toISOString() }));
+  const r = f.run('rebaseline', rebaselineArgs(f, { brief: brief2, 'board-readback': live2 })).record;
+  assert.equal(r.baselines[1].agents.sha256, sha('Recorded rules.\n'));
+  assert.equal(r.baselines[1].agents.path, join(f.profile.tickets, 'ACME-5', 'baseline-2', 'agents.md'));
+  assert.equal(r.baselines[1].agents.source, r.baselines[0].agents.source);
+  assert.deepEqual(r.agents, r.baselines[1].agents);
+  writeFileSync(r.agents.path, 'Tampered copy.\n');
+  const brief3 = f.put('brief3.md', readFileSync(f.brief, 'utf8').replace('Brief v1', 'Brief v3'));
+  const live3 = f.put('live3.json', JSON.stringify({ ...JSON.parse(readFileSync(f.live)), description: readFileSync(brief3, 'utf8'), observedAt: new Date().toISOString() }));
+  assert.throws(() => f.run('rebaseline', rebaselineArgs(f, { brief: brief3, 'board-readback': live3 })), /prior AGENTS.md/);
+});
+
+test('a rebaseline without --agents on a run that never recorded one keeps working', (t) => {
+  const f = fixture(t);
+  withAgents(f);
+  f.init();
+  const brief2 = f.put('brief2.md', readFileSync(f.brief, 'utf8').replace('Brief v1', 'Brief v2'));
+  const live2 = f.put('live2.json', JSON.stringify({ ...JSON.parse(readFileSync(f.live)), description: readFileSync(brief2, 'utf8'), observedAt: new Date().toISOString() }));
+  const r = f.run('rebaseline', rebaselineArgs(f, { brief: brief2, 'board-readback': live2 })).record;
+  assert.equal(r.baselines[1].agents, null);
+  assert.equal(r.agents, null);
+});
+
+test('completion refuses a changed AGENTS.md copy', (t) => {
+  const f = fixture(t, 'none');
+  const agents = withAgents(f);
+  f.run('init', { brief: f.brief, approval: 'synthetic approval', instruction: 'synthetic explicit run', review: 'none', 'board-readback': f.live, agents });
+  f.run('plan', { path: f.plan });
+  f.run('change', { id: 'report', target: 'workspace', status: 'intent', evidence: f.proof });
+  f.run('change', { id: 'report', target: 'workspace', status: 'verified', evidence: f.proof });
+  f.run('verify', { check: 'brief-acceptance', status: 'pass', evidence: f.proof });
+  const copy = f.run('show').record.agents.path;
+  writeFileSync(copy, 'Tampered.\n');
+  assert.throws(() => f.run('complete'), /baseline evidence/);
+});
+
+test('the CLI takes --agents for a consulting init', (t) => {
+  const s = sandbox();
+  t.after(s.clean);
+  const source = join(s.root, 'advice');
+  mkdirSync(source, { recursive: true });
+  writeFileSync(join(source, 'AGENTS.md'), 'Release notes stay on the ticket.\n');
+  const tickets = join(s.root, 'advice-runs');
+  const project = { mode: 'consulting', runs: true, source, tickets, board: { teamId: 'synthetic-team', projectId: 'synthetic-project' }, ticketPrefix: 'ACME', targets: { workspace: { synthetic: true } }, runbook: 'docs/runbook.md', verificationChecks: ['brief-acceptance'] };
+  s.config({ approver: { name: 'Ada' }, board: { kind: 'linear' }, projects: { 'acme-advice': project } });
+  const brief = join(s.root, 'brief.md');
+  writeFileSync(brief, 'Brief v1\nApproval: Approved by Ada on today\nCross-model review: plan. Synthetic\n');
+  const live = join(s.root, 'live.json');
+  writeFileSync(live, JSON.stringify({ id: 'ACME-5', teamId: 'synthetic-team', projectId: 'synthetic-project', observedAt: new Date().toISOString(), description: readFileSync(brief, 'utf8') }));
+  const r = s.run(['run', 'init', 'acme-advice', 'ACME-5', '--brief', brief, '--approval', 'synthetic', '--instruction', 'synthetic run', '--review', 'plan', '--board-readback', live, '--agents', join(source, 'AGENTS.md')]);
+  assert.equal(r.status, 0, r.stdout);
+  assert.equal(r.json.record.agents.sha256, sha('Release notes stay on the ticket.\n'));
+  assert.equal(s.run(['run', 'show', 'acme-advice', 'ACME-5']).json.record.agents.sha256, r.json.record.agents.sha256);
 });

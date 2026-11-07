@@ -30,7 +30,7 @@ A status is used only by its exact name. Each state's name comes from the projec
 | Key | Required | Default | Meaning |
 |---|---|---|---|
 | `mode` | no | `repository` | `repository`, `consulting` or `configuration` ([runs.md](runs.md)). |
-| `source` | yes | | The folder holding the repo checkouts, one subfolder per repo. |
+| `source` | yes | | The folder holding the repo checkouts, one subfolder per repo. For a consulting or configuration project, the workspace that holds the project's AGENTS.md, which need not be a Git repository. |
 | `tickets` | yes | | The folder for ticket folders and run records. |
 | `repos` | repository: yes | `{}` | The repos, by name. A configuration project has none. |
 | `validatesAgainst` | no | `{}` | For each repo, the repos its changes are checked against, read only. |

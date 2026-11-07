@@ -62,6 +62,8 @@ What the journal enforces:
 - **Operations with evidence.** Each external change is recorded as intent with before evidence, then verified or failed with after evidence, and never replayed. An abandoned attempt is superseded only with evidence that nothing remains.
 - **Completion.** `bollplank run complete` needs the selected reviews, intact evidence, at least one verified operation and every check passing. It records Acceptance, never Done.
 - **A fixed project entry.** The run records a hash of the project's entry as the config file writes it. When the entry changes, the run stops until a rebaseline. The top level `board.statuses` and other projects are not part of it, so changing them never stops a run.
-- **Amendments.** `bollplank run rebaseline` records an approved change to the brief or config and resets the plan, reviews and verification.
+- **Amendments.** `bollplank run rebaseline` records an approved change to the brief, config or AGENTS.md and resets the plan, reviews and verification.
+- **The rules the run started from.** `--agents <source>/AGENTS.md` at init keeps a copy of the project's AGENTS.md, the exact file the run reads. A rebaseline without it carries the copy forward.
+- **Acceptance.** `bollplank-accept` reads `<source>/AGENTS.md` fresh, from the remote's default branch when the source is a Git work tree and from disk otherwise. When it differs from the run's copy, it shows the approver the difference and asks before any board write.
 
 These records prove that files did not change. They authenticate no one and are not access controls. The procedures are in the run skill's [consulting](../skills/bollplank-run/references/consulting.md) and [configuration](../skills/bollplank-run/references/configuration.md) references.
