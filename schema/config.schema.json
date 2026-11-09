@@ -12,9 +12,10 @@
       "type": "object",
       "required": ["kind"],
       "properties": {
-        "kind": { "const": "linear" },
-        "team": { "type": "string", "description": "The default team for projects that name none." },
-        "project": { "type": "string", "description": "The default board project for projects that name none." },
+        "kind": { "enum": ["linear", "jira"] },
+        "team": { "type": "string", "description": "The default team for projects that name none. On Jira, the site, such as acme.atlassian.net." },
+        "project": { "type": "string", "description": "The default board project for projects that name none. On Jira, the project key, such as ACME." },
+        "space": { "$ref": "#/$defs/space" },
         "statuses": { "$ref": "#/$defs/statuses", "description": "The status names for projects that map none of their own. A name left out is the board kind's suggestion." }
       }
     },
@@ -30,6 +31,7 @@
     "projects": { "type": "object", "additionalProperties": { "$ref": "#/$defs/project" } }
   },
   "$defs": {
+    "space": { "type": "string", "pattern": "^[A-Za-z0-9~][A-Za-z0-9_~-]{0,254}$", "description": "Jira only: the Confluence space key that holds the Release notes page." },
     "statuses": {
       "type": "object",
       "properties": { "draft": { "type": "string" }, "ready": { "type": "string" }, "inProgress": { "type": "string" }, "acceptance": { "type": "string" }, "done": { "type": "string" } },
@@ -78,7 +80,7 @@
         "validatesAgainst": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } },
         "shipOrder": { "type": "array", "items": { "type": "string" }, "uniqueItems": true, "description": "The order repos merge and deploy in. When given, it lists every configured repo exactly once." },
         "critic": { "type": "object", "properties": { "default": { "enum": ["other", "same", "claude", "codex"], "description": "This project's critic default. It wins over the top level critic.default." } } },
-        "board": { "type": "object", "properties": { "team": { "type": "string" }, "project": { "type": "string" }, "teamId": { "type": "string" }, "projectId": { "type": "string" }, "statuses": { "$ref": "#/$defs/statuses", "description": "This project's own status names. A name left out comes from the top level board.statuses." } } },
+        "board": { "type": "object", "properties": { "kind": { "enum": ["linear", "jira"], "description": "This project's board kind. Left out, the top level board.kind. A kind other than the top level one must set its own team, project and all five statuses." }, "space": { "$ref": "#/$defs/space" }, "team": { "type": "string" }, "project": { "type": "string" }, "teamId": { "type": "string" }, "projectId": { "type": "string" }, "statuses": { "$ref": "#/$defs/statuses", "description": "This project's own status names. A name left out comes from the top level board.statuses." } } },
         "runs": { "type": "boolean", "default": false },
         "privateScan": { "type": "boolean", "default": false },
         "stopList": { "type": "array", "items": { "type": "string" } },

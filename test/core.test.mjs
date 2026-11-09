@@ -74,7 +74,7 @@ test('each project has its own statuses: its own names, then the top level ones,
   s.config(two);
   const top = s.run(['context']).json;
   assert.equal(top.board.statuses.acceptance, 'Review');
-  assert.deepEqual(top.boards['globex-portal'], { team: 'GLOBEX', project: 'Portal', statuses: c.projects['globex-portal'].board.statuses });
+  assert.deepEqual(top.boards['globex-portal'], { kind: 'linear', team: 'GLOBEX', project: 'Portal', statuses: c.projects['globex-portal'].board.statuses });
   assert.equal(top.boards['acme-shop'].statuses.ready, 'Ready');
   assert.equal(s.run(['context', 'globex-portal']).json.board.statuses.acceptance, 'In Review');
   assert.equal(s.run(['context', 'acme-shop']).json.board.statuses.acceptance, 'Review');
