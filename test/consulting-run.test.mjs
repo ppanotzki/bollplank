@@ -356,3 +356,36 @@ test('the CLI takes --agents for a consulting init', (t) => {
   assert.equal(r.json.record.agents.sha256, sha('Release notes stay on the ticket.\n'));
   assert.equal(s.run(['run', 'show', 'acme-advice', 'ACME-5']).json.record.agents.sha256, r.json.record.agents.sha256);
 });
+
+test('in a Linear config a Jira project reads back and names the board as Jira through the CLI', (t) => {
+  const s = sandbox();
+  t.after(s.clean);
+  const statuses = { draft: 'Draft', ready: 'Ready', inProgress: 'In Progress', acceptance: 'Acceptance', done: 'Done' };
+  const base = { mode: 'consulting', runs: true, targets: { workspace: { synthetic: true } }, runbook: 'docs/runbook.md', verificationChecks: ['brief-acceptance'] };
+  const jira = { ...base, source: join(s.root, 'portal'), tickets: join(s.root, 'portal-runs'), ticketPrefix: 'ACM', board: { kind: 'jira', team: 'acme.atlassian.net', project: 'ACM', statuses, teamId: '00000000-0000-4000-8000-000000000001', projectId: '10001' } };
+  const linear = { ...base, source: join(s.root, 'advice'), tickets: join(s.root, 'advice-runs'), ticketPrefix: 'ACME', board: { teamId: 'synthetic-team', projectId: 'synthetic-project' } };
+  s.config({ approver: { name: 'Ada' }, board: { kind: 'linear' }, projects: { 'acme-portal': jira, 'acme-advice': linear } });
+
+  const brief = join(s.root, 'brief.md');
+  writeFileSync(brief, 'Brief v1\nApproval: Approved by Ada on today\nCross-model review: plan. Synthetic\n');
+  const live = join(s.root, 'live.json');
+  const put = (fields) => writeFileSync(live, JSON.stringify({ id: 'ACM-5', teamId: jira.board.teamId, projectId: jira.board.projectId, observedAt: new Date().toISOString(), description: readFileSync(brief, 'utf8'), ...fields }));
+  const init = (project, ticket) => s.run(['run', 'init', project, ticket, '--brief', brief, '--approval', 'synthetic', '--instruction', 'synthetic run', '--review', 'plan', '--board-readback', live]);
+
+  put({ observedAt: '2000-01-01T00:00:00Z' });
+  assert.match(init('acme-portal', 'ACM-5').json.detail, /^Jira readback must be freshly/);
+  put({ teamId: '00000000-0000-4000-8000-000000000002' });
+  assert.match(init('acme-portal', 'ACM-5').json.detail, /^Jira readback identity mismatch/);
+  put({ projectId: '10002' });
+  assert.match(init('acme-portal', 'ACM-5').json.detail, /^Jira readback identity mismatch/);
+  put({ description: 'Brief v2\n' });
+  assert.match(init('acme-portal', 'ACM-5').json.detail, /differs from current Jira readback/);
+  put({});
+  const r = init('acme-portal', 'ACM-5');
+  assert.equal(r.status, 0, r.stdout);
+  assert.equal(r.json.record.ticket, 'ACM-5');
+
+  // The Linear project in the same config still names Linear.
+  put({ id: 'ACME-5', observedAt: '2000-01-01T00:00:00Z' });
+  assert.match(init('acme-advice', 'ACME-5').json.detail, /^Linear readback must be freshly/);
+});

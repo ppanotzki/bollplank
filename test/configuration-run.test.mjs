@@ -389,3 +389,28 @@ test('a configuration run keeps the AGENTS.md copy and carries it through a reba
   assert.equal(r2.agents.sha256, r.agents.sha256);
   assert.equal(r2.baselines[1].agents.path, join(f.profile.tickets, 'ACME-1', 'baseline-2', 'agents.md'));
 });
+
+test('a Jira readback uses the issue key, cloud id and numeric project id, and names Jira', (t) => {
+  const f = fixture(t);
+  f.profile.allowedTickets = ['ACM-1'];
+  f.profile.board = { kind: 'jira', teamId: '00000000-0000-4000-8000-000000000001', projectId: '10001' };
+  const run = (cmd, opts = {}) => configurationRun({ project: 'acme-ops', ticket: 'ACM-1', profile: f.profile, cmd, opts, approver: 'Ada', boardKind: 'jira' });
+  const valid = { id: 'ACM-1', teamId: f.profile.board.teamId, projectId: f.profile.board.projectId, observedAt: new Date().toISOString(), description: readFileSync(f.brief, 'utf8') };
+  const opts = { brief: f.brief, approval: 'https://example.invalid/approval', instruction: 'synthetic run', review: 'plan', 'board-readback': f.live };
+  const alter = (fields) => writeFileSync(f.live, JSON.stringify({ ...valid, ...fields }));
+  alter({ teamId: '00000000-0000-4000-8000-000000000002' });
+  assert.throws(() => run('init', opts), /Jira readback identity mismatch/);
+  alter({ projectId: '10002' });
+  assert.throws(() => run('init', opts), /Jira readback identity mismatch/);
+  alter({ id: 'ACM-2' });
+  assert.throws(() => run('init', opts), /Jira readback identity mismatch/);
+  alter({ description: valid.description.replace('Brief v1', 'Brief v2') });
+  assert.throws(() => run('init', opts), /brief differs from current Jira readback/);
+  alter({ observedAt: '2000-01-01T00:00:00Z' });
+  assert.throws(() => run('init', opts), /Jira readback must be freshly/);
+  assert.equal(existsSync(f.profile.tickets), false);
+  alter({});
+  const r = run('init', opts).record;
+  assert.equal(r.ticket, 'ACM-1');
+  assert.deepEqual(JSON.parse(readFileSync(r.baselines[0].liveEvidence.path, 'utf8')), valid);
+});
