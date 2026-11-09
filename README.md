@@ -1,6 +1,6 @@
 # Bollplank
 
-Bollplank is a workflow kit for Claude Code and Codex. One model writes a ticket's brief, a model from another vendor critiques it, the author answers every point, and a named person approves it before anything is built. After approval, a ticket run can take the ticket from plan to shipped, with review gates on the way. Linear is the board.
+Bollplank is a workflow kit for Claude Code and Codex. One model writes a ticket's brief, a model from another vendor critiques it, the author answers every point, and a named person approves it before anything is built. After approval, a ticket run can take the ticket from plan to shipped, with review gates on the way. The board is Linear or Jira, chosen per project.
 
 The method comes from the article [Two Models and an Engineer](https://neologic.se/articles/two-models-and-an-engineer/). Its claim is that when code is cheap, the bottleneck moves to the specification, so the specification is where review pays off.
 
@@ -24,9 +24,9 @@ The approver can approve after any round. A critic's Approve verdict is not an a
 
 ## The five workflow states
 
-Each of the five states maps to a status of your Linear team. `bollplank init` asks for the names.
+Each of the five states maps to a status of your Linear team or Jira project. `bollplank init` asks for the names.
 
-| State | What it means | Linear's suggested status |
+| State | What it means | Suggested status |
 |---|---|---|
 | `draft` | The brief is being written and critiqued. | Draft |
 | `ready` | The approver approved the brief. | Ready |
@@ -34,7 +34,7 @@ Each of the five states maps to a status of your Linear team. `bollplank init` a
 | `acceptance` | Shipped, waiting for the approver's acceptance test. | Acceptance |
 | `done` | Accepted. | Done |
 
-A new Linear team has Backlog, Todo, In Progress, Done and Canceled. Add Draft, Ready and Acceptance in Linear's settings, or map those states to statuses you have.
+A new Linear team has Backlog, Todo, In Progress, Done and Canceled. A new Jira project usually has To Do, In Progress and Done. Add Draft, Ready and Acceptance in the board's settings, or map those states to statuses you have.
 
 ## An example ticket
 
@@ -59,7 +59,7 @@ Unpaid orders keep stock reserved for 14 days.
 - The API refuses to cancel a paid order.
 ```
 
-**The critique**, posted as a comment by the critic:
+**The critique**, posted as a comment by the critic, or on Jira by the lead with the critic's text unchanged:
 
 ```text
 Critique of brief v1
@@ -92,7 +92,7 @@ Round 2 came back `Verdict: Approve`. Ada wrote "I approve brief v2", the lead p
 
 ## Quickstart
 
-You need a Mac with Node 20 or later and git, Claude Code or Codex or both signed in with a Claude or ChatGPT subscription, and a Linear account.
+You need a Mac with Node 20 or later and git, Claude Code or Codex or both signed in with a Claude or ChatGPT subscription, and a Linear or Jira account.
 
 ```sh
 git clone https://github.com/ppanotzki/bollplank ~/.bollplank/kit && ~/.bollplank/kit/install.sh
@@ -108,12 +108,12 @@ Bollplank never takes an API key and stores no credentials. The critic runs thro
 
 ### What can the critic reach?
 
-Its client's Linear tools, to read the issue and post its critique, and the one source folder the lead opens for a plan or code review. No other MCP server, no web, no file edits. Claude Code gets no shell. Codex gets a shell in a read only sandbox with no network. See [SECURITY.md](SECURITY.md).
+On Linear, its client's Linear tools, to read the issue and post its critique. On Jira, only `getJiraIssue` and `executeRead` of `listJiraIssueComments`, so it reads and replies, and the lead posts its critique unchanged. Also the one source folder the lead opens for a plan or code review. No other MCP server, no web, no file edits. Claude Code gets no shell. Codex gets a shell in a read only sandbox with no network. See [SECURITY.md](SECURITY.md).
 
 <!-- TERMS: confirm wording before publishing -->
 ### Bollplank drives my subscriptions from scripts. What does that mean?
 
-The critic is a separate run of Claude Code or Codex, started by `bollplank critic` in print or exec mode, on the account the client is signed in to. `bollplank init` and `bollplank doctor` also start short headless runs to check that each client can read Linear. These runs count against your subscription like your own sessions. You run Bollplank on your own accounts, and you are responsible for using it within your provider's terms: [Anthropic's consumer terms](https://www.anthropic.com/legal/consumer-terms) for Claude, and [OpenAI's terms of use](https://openai.com/policies/terms-of-use/) for ChatGPT and Codex.
+The critic is a separate run of Claude Code or Codex, started by `bollplank critic` in print or exec mode, on the account the client is signed in to. `bollplank init` and `bollplank doctor` also start short headless runs to check that each client can read the board. These runs count against your subscription like your own sessions. You run Bollplank on your own accounts, and you are responsible for using it within your provider's terms: [Anthropic's consumer terms](https://www.anthropic.com/legal/consumer-terms) for Claude, and [OpenAI's terms of use](https://openai.com/policies/terms-of-use/) for ChatGPT and Codex.
 
 ### What if I have only one client?
 
@@ -121,7 +121,7 @@ The critic is then the same model in a fresh session with a harder prompt. It is
 
 ### Which boards and clients are supported?
 
-Linear, Claude Code and Codex.
+Linear and Jira, with Claude Code and Codex. Each project names its board kind, and a project of another kind than the top level sets its own board. See [Configuration](docs/config.md).
 
 ## Docs
 

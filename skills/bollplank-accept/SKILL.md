@@ -20,7 +20,7 @@ Only the approver accepts, in so many words ("accept", "accepted"). Take their n
    - Equal: carry on.
    - Different: show the approver the difference between the run's copy at `agents.path` and the file you read, and ask before any board write. Then use the file you read, since it holds the current rules. In a Git source this also shows a run that used local changes not on the base branch.
    - `agents` is null or missing: the run recorded no profile. Say so and carry on with the file you read.
-2. **Release note.** Make sure the run's "Release note" comment exists. Write it now if the run did not. Then add it to the project's "Release notes" document on the board (see bollplank-board), unless the project's AGENTS.md says release notes stay on the ticket:
+2. **Release note.** Make sure the run's "Release note" comment exists. Write it now if the run did not. Then add it to the project's "Release notes" document as the board reference says (see bollplank-board), unless the project's AGENTS.md says release notes stay on the ticket. On a Jira project with no `board.space` in `bollplank context <project>`, say in one sentence that its release notes are only in the comment and the CHANGELOG, and skip the rest of this step. Otherwise the section is:
    - a new section at the top, headed `## ACME-1 · <ticket title>`
    - a line `Accepted <date>.` followed by the builds this ticket itself deployed, from the run record or the run report, for example `acme-api build 248, acme-web build 270.` Name a component the ticket did not deploy as unchanged, never as the build that happens to be live.
    - the note text.

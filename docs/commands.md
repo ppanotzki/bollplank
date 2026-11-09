@@ -14,8 +14,8 @@ Everything is one command, `bollplank <command> [options]`. `bollplank help` lis
 
 [setup.md](setup.md) has the steps and checks.
 
-- **`bollplank init [--answers <file>] [--offline] [--json]`** sets Bollplank up or again. Failures: `usage` (no terminal and no answers file, a bad answers file, a missing answer), `config` (the answers do not validate, so nothing was written), `corrupt` (the install record), `missing-project` (the Linear project was still missing after three reads, so nothing was saved) and `stopped` (the questions were interrupted).
-- **`bollplank doctor [--offline] [--json]`** checks the install and exits 1 when a required check fails. `--json` prints `{ ok, offline, checks }`, each check with `id`, `name`, `required`, `ok`, `detail`, `fix`, and `skipped` under `--offline`.
+- **`bollplank init [--answers <file>] [--offline] [--json]`** sets Bollplank up or again. Failures: `usage` (no terminal and no answers file, a bad answers file, a missing answer), `config` (the answers do not validate, so nothing was written), `corrupt` (the install record), `missing-project` (the board project was still missing after three reads, so nothing was saved) and `stopped` (the questions were interrupted).
+- **`bollplank doctor [--offline] [--json]`** checks the install and exits 1 when a required check fails. `--json` prints `{ ok, offline, checks }`, each check with `id`, `name`, `required`, `ok`, `detail`, `fix`, and `skipped` under `--offline`. The board reads have the ids `<kind>.<client>` and `<kind>`, such as `linear.claude` and `jira.codex`, for each kind the config uses.
 - **`bollplank update [--pre] [--json]`** moves the kit to the newest release tag. A success has `kit`, `installed`, `tag`, `already`, `ahead`, `from`, `to`, `links` and `changelog`. Failures: `not-a-checkout`, `corrupt`, `local-changes`, `fetch`, `no-release` and `checkout`.
 - **`bollplank uninstall [--purge] [--yes] [--json]`** removes the recorded links. A success has `removed`, `left`, `home`, `purged`, `kept` and `command`. Failures: `usage` (`--purge` with no terminal and no `--yes`), `lock-held`, `unsafe-purge` and `corrupt`, all before anything is removed.
 
@@ -25,9 +25,9 @@ Prints the Workflow line every brief and comment carries, such as `Bollplank 0.2
 
 ### `bollplank context [<project>]`
 
-Prints what a skill needs: `workflow`, `kit`, `approver`, `copyStyle`, `board` with its `statuses`, `critic`, `projects` (the names) and `boards`, which maps each project to its Linear `team`, `project` and `statuses`, with the top level defaults filled in.
+Prints what a skill needs: `workflow`, `kit`, `approver`, `copyStyle`, `board` with its `statuses`, `critic`, `projects` (the names) and `boards`, which maps each project to its board `kind`, `team`, `project`, `statuses` and `space` when set, with the top level defaults filled in for a project of the top level kind.
 
-With a project, `board.statuses` is that project's effective mapping: its own names, then the top level ones, then Linear's suggestion. `board.team` and `board.project` are the project's own, else the top level ones, so `board` matches the project's `boards` entry. It adds `project` with `name`, `mode`, `runs`, `stopList`, `board`, `repos`, `shipOrder`, `privateScan`, `critic`, `source` and `tickets`. `project.critic` is `{ "default": ..., "from": "project" }` when the project sets its own, else the top level one with `"from": "config"`.
+With a project, `board.kind` is that project's kind: its own `board.kind`, else the top level one. `board.statuses` is its effective mapping: its own names, then the top level ones, then the kind's suggestion. `board.team` and `board.project` are the project's own, else the top level ones, so `board` matches the project's `boards` entry. A project of another kind than the top level takes nothing from the top level board. On Jira, `team` is the site, `project` the project key, and `space` the Confluence space key when set. It adds `project` with `name`, `mode`, `runs`, `stopList`, `board`, `repos`, `shipOrder`, `privateScan`, `critic`, `source` and `tickets`. `project.critic` is `{ "default": ..., "from": "project" }` when the project sets its own, else the top level one with `"from": "config"`.
 
 ## The critic
 
@@ -39,7 +39,10 @@ bollplank critic --ticket <TICKET> --subject brief|plan|code --round <n> --promp
   [--timeout <seconds>] [--model <m>] [--effort <e>] [--new-session]
 ```
 
-Runs one critique round. The critic reads the issue and its comments with its client's Linear tools, posts its critique as one comment, and replies with the text it posted. The command returns that text.
+Runs one critique round. The board kind comes from `--project`.
+
+- **Linear.** The critic reads the issue and its comments with its client's Linear tools, posts its critique as one comment, and replies with the text it posted. The command returns that text with `delivery: "posted"`.
+- **Jira.** The critic is reply only. It reads the issue with `getJiraIssue` and every page of the comments with `executeRead` of `listJiraIssueComments`, and replies with its critique. The command returns the text with `posted: false`, `delivery: "reply"` and `pending: true`. The round is not counted yet. The lead posts the text unchanged, reads it back and runs `bollplank critic confirm`.
 
 - `--prompt-file` is the prompt the lead filled from [prompts/critic.md](../prompts/critic.md) or [prompts/critic-same.md](../prompts/critic-same.md). The lead fills `{TICKET}`, `{ROUND}`, `{SUBJECT}`, `{SUBJECT_SHORT}`, `{DATE}`, `{ROUND_NOTE}` and `{BODY}`. The command fills `{REVIEWER}`, `{MODEL}`, `{WORKFLOW}`, `{ISSUE}` and `{INSTRUCTION}`.
 - `--lead` is the client of the calling session. `--critic` overrides the defaults for this call. Without it, `--project` takes that project's `critic.default`, else the top level one. `other` is the client that is not `--lead`.
@@ -48,23 +51,24 @@ Runs one critique round. The critic reads the issue and its comments with its cl
 - `--timeout` defaults to 600 seconds. `--model` and `--effort` override the config for this call.
 - `--new-session` starts a fresh session and keeps the round counts. Use it after `session-missing`.
 
-**What the critic gets.** Its client's Linear tools, read and write, and the `--read-dir` folder. No other MCP server, no web and no file edits. Claude Code has no shell. Codex has a shell in a read only sandbox with no network. Its environment loses every model key, provider route and session marker. [SECURITY.md](../SECURITY.md#what-the-critic-can-reach) has the detail.
+**What the critic gets.** On Linear, its client's Linear tools, read and write. On Jira, only `getJiraIssue` and `executeRead`, on Atlassian's official server, and `executeRead` only for `listJiraIssueComments`. Also the `--read-dir` folder. No other MCP server, no web and no file edits. Claude Code has no shell. Codex has a shell in a read only sandbox with no network. Its environment loses every model key, provider route and session marker. [SECURITY.md](../SECURITY.md#what-the-critic-can-reach) has the detail.
 
-**The subject must have been read.** A critique is used only when the critic made a successful call that read the issue and one that read its comments. An issue read counts when its arguments name the key, or when its result is the issue itself, with an `identifier` equal to the key. Either way the issue's id becomes an alias, so a critic that reads the comments and posts by the id still counts. A read of another issue never counts, even when its result mentions the key. Otherwise the call fails with `board-unreachable` and the session is kept, so a retry resumes it.
+**The subject must have been read.** A critique is used only when the critic made a successful call that read the issue and one that read its comments. An issue read counts when its arguments name the key, or when its result is the issue itself, with an `identifier` equal to the key. Either way the issue's id becomes an alias, so a critic that reads the comments and posts by the id still counts. A read of another issue never counts, even when its result mentions the key. Otherwise the call fails with `board-unreachable` and the session is kept, so a retry resumes it. On Jira, comments inside the `getJiraIssue` result never count, and the `listJiraIssueComments` pages for this issue and the project's cloud id must cover the whole list without a gap: the first starts at 0, each next one starts where the one before ended, and the last says `isLast: true` or reaches `total`.
 
-**What the critic posted counts.** The body of the critic's successful comment call on the issue is the source of truth. Only an argument that identifies the issue, such as `issueId`, `id` or `url`, can name it, never free text such as a body or a query. When that body is a well formed critique, it is the returned text, even when the final reply is empty or malformed. When the call fails after such a post, for any reason, the round is counted all the same and the failure says `counted: true`, since the board holds that round now. The lead then posts nothing more and calls the next round when it is due.
+**What the critic posted counts,** on Linear. The body of the critic's successful comment call on the issue is the source of truth. Only an argument that identifies the issue, such as `issueId`, `id` or `url`, can name it, never free text such as a body or a query. When that body is a well formed critique, it is the returned text, even when the final reply is empty or malformed. When the call fails after such a post, for any reason, the round is counted all the same and the failure says `counted: true`, since the board holds that round now. The lead then posts nothing more and calls the next round when it is due.
 
 **Sessions and rounds.** One session per ticket, provider and mode is reused across subjects. Rounds count per subject, and `--round` must be one more than the rounds saved, or the call fails with `round-mismatch`. State is saved with a counted round, and after `board-unreachable` with only the session, so a retry resumes it. Any other failure saves nothing. One call per ticket, provider and mode runs at a time. Every call with a known session is bound to its ticket in the ledger.
 
 **The header.** The command fills `Reviewer:`, `Model:` and `Workflow:` before the call. `Reviewer:` is `Claude Code` or `Codex`, with `, same provider, separate session` for the lead's own provider. `Model:` is the pinned `model` and `effort`. Without a pinned model it is the model this client last reported, kept in `~/.bollplank/critics/models.json` by doctor's dry run and by each critique, or `Unverified` before any report. When the client reports another model, the returned text names that one, and `modelCorrection` is `{ posted, reported }`. The posted header, the lines from `Critique of` to the first blank line, must carry all three lines. The expected values are the wrapper's `Reviewer:` and `Workflow:`, and for `Model:` the model the client reported, or the pinned line when none was reported. The returned text always has the expected header. When the posted header lacks a line or holds another value, `headerCorrection` lists each one as `{ line, posted, expected }`, with `posted` null for a missing line. The round still counts, and the lead edits the posted comment's header to the expected lines and reads it back before it relies on the round. If the edit fails, it posts the returned text as a new comment.
 
-A success has `critic`, `mode` (`other`, `same` or `named`), `ticket`, `subject`, `round`, `sessionId`, `sessionRestarted` (with `--new-session`), `model`, `verdict` (`Approve` or `Revise`), `posted` (whether a call that saves a comment on the issue succeeded), `modelCorrection` and `headerCorrection` when needed, `usage` and `text`. Every failure has `critic`, `mode`, `ticket`, `subject`, `round`, and `sessionId` once known.
+A success has `critic`, `mode` (`other`, `same` or `named`), `delivery` (`posted` or `reply`), `ticket`, `subject`, `round`, `sessionId`, `sessionRestarted` (with `--new-session`), `model`, `verdict` (`Approve` or `Revise`), `posted` (whether a call that saves a comment on the issue succeeded), `modelCorrection` and `headerCorrection` when needed, `usage` and `text`. Every failure has `critic`, `mode`, `ticket`, `subject`, `round`, and `sessionId` once known.
 
 | Failure | Meaning |
 |---|---|
 | `usage` | A missing or bad option, or a file or folder that cannot be read. |
-| `critic-unavailable` | The client is not found, not signed in with a subscription, or has no Linear server that is connected and signed in. Or Claude Code's user settings set a key or a provider route or let the critic read outside its folder, or its managed settings could keep hooks on, or Codex could not switch off its other MCP servers. Nothing else is tried. `fix` says what to do. |
+| `critic-unavailable` | The client is not found, not signed in with a subscription, or has no board server that is connected and signed in. For Jira that is Atlassian's server at its official URL. Or Claude Code's user settings set a key or a provider route or let the critic read outside its folder, or its managed settings could keep hooks on, or Codex could not switch off its other MCP servers. Nothing else is tried. `fix` says what to do. |
 | `critic-busy` | Another call for this ticket, provider and mode is running. The detail names its lock folder. |
+| `post-pending` | A Jira round is waiting for the lead's post and confirm. The detail names its subject and round. No client runs. |
 | `round-mismatch` | The round is not the next one. `expected` says which is. No client runs. |
 | `state` | The saved critic state cannot be read. |
 | `session-missing` | The client lost the session. Retry with `--new-session`. |
@@ -76,6 +80,32 @@ A success has `critic`, `mode` (`other`, `same` or `named`), `ticket`, `subject`
 | `empty-answer`, `malformed-answer` | The reply was empty, or does not start with `Critique of ` or has no `Verdict:` line. `head` shows its start. |
 
 Every failure after the critic started carries `posted`, and so does a `receivedReview`, so the lead knows whether a comment was left anyway. `counted: true` says the posted comment was a well formed critique and its round is counted.
+
+### `bollplank critic pending` and `bollplank critic confirm`
+
+```
+bollplank critic pending --ticket <TICKET>
+bollplank critic confirm --ticket <TICKET> --subject brief|plan|code --round <n> --text-file <file> --comment <link>
+```
+
+For a Jira round, which the critic answers with a reply only.
+
+- **pending** prints the pending record, `{ subject, round, sha256, file, at }`, and the stored text, after checking that the text still matches its sha256. It fails when it does not. It never starts a client. The text is kept in `~/.bollplank/critics`, in a file named after the critic's state file, `<state file name without .json>.pending-<subject>-<round>.md`, so every ticket, provider and mode has its own.
+- **confirm** runs after the lead posts the text unchanged and reads it back. The sha256 of `--text-file` must equal the pending one, and the subject and round must match, or it fails and nothing changes. On success the round is counted, as a posted round is, and the pending record and its file are cleared. `--comment` is the link of the posted comment.
+
+The critique skill uses both for recovery too. After a lost reply, an interrupted post or an interrupted confirm, it runs `pending`, looks for a comment whose body is exactly the stored text, and confirms with that comment. It posts the text only when no comment has it. The critic never runs again for a pending round.
+
+## The board
+
+### `bollplank board safe-write`
+
+```
+bollplank board safe-write jira --adf <file>
+```
+
+Checks a Jira description before the board skill replaces it. The file holds the description as Jira returns it with `responseContentFormat: "adf"`. Markdown keeps only some ADF types when it is written and read back: the nodes `doc`, `paragraph`, `text`, `heading`, `bulletList`, `orderedList`, `listItem`, `codeBlock`, `rule`, `hardBreak` and `blockquote`, and the marks `strong`, `em`, `code` and `link`. The command lists every other node or mark type in `unsupported`, in the order found, each once. It reads the one file and never touches the network.
+
+It exits 0 with `{ "ok": true, "unsupported": [] }` when there are none, also for an empty document, an empty file or a description that is `null`. Failures: `unsupported` (with the types, such as `media`, `mention` or `table`), `not-adf` (the file is not valid JSON, or its root has no `type` of `doc`) and `usage`.
 
 ## Tickets and runs
 
@@ -143,7 +173,7 @@ bollplank run log <project> <TICKET> --event <text>
 bollplank run show <project> <TICKET>
 ```
 
-`--linear-readback` is another name for `--board-readback`. `--agents` must resolve to the project's `<source>/AGENTS.md`, stay inside the source folder, and be readable and not empty. The baseline keeps a copy and its sha256 as `agents`, which `run show` prints, and a rebaseline without `--agents` carries the latest copy forward. A run started without it has `agents` null or missing. These modes read the critic from the brief file's `Critic:` line. Failures: `usage`, `ticket-not-enabled`, `runs-disabled`, `no-run`, `stage-incomplete`, `refused`, `config` and `corrupt`.
+`--linear-readback` is another name for `--board-readback`. On Jira the readback's `id` is the issue key, `teamId` the site's cloud id and `projectId` the numeric project id. `--agents` must resolve to the project's `<source>/AGENTS.md`, stay inside the source folder, and be readable and not empty. The baseline keeps a copy and its sha256 as `agents`, which `run show` prints, and a rebaseline without `--agents` carries the latest copy forward. A run started without it has `agents` null or missing. These modes read the critic from the brief file's `Critic:` line. Failures: `usage`, `ticket-not-enabled`, `runs-disabled`, `no-run`, `stage-incomplete`, `refused`, `config` and `corrupt`.
 
 ## Shipping
 

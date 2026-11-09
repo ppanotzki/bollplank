@@ -2,7 +2,7 @@
 
 This guide takes you from nothing to a first approved ticket, `ACM-1`, on a Mac. It takes about half an hour. The names Acme, `ACM` and `acme-shop` are examples. Use your own.
 
-You use Terminal twice, to make a folder and to install. Everything else happens in the Claude app and in Linear.
+You use Terminal twice, to make a folder and to install. Everything else happens in the Claude app and in Linear. The guide uses Linear. [Using Jira instead](#using-jira-instead) says what changes for a Jira board.
 
 ## What you need
 
@@ -53,7 +53,7 @@ Init asks one question at a time in Terminal. A value in brackets is the default
 
 **Step 1** finds Claude Code and Codex and their sign in. Nothing to answer.
 
-**Step 2** reads Linear from each client. This takes a minute or two.
+**Step 2** asks the board kind. Return takes `linear`. Then it reads Linear from each client. This takes a minute or two.
 
 - If a browser opens and asks you to authorize Linear for Claude Code or Codex, click **Authorize**, then go back to Terminal.
 - If init asks to add Linear's MCP server to a client, answer `y`. A browser opens for the Linear sign in.
@@ -80,7 +80,7 @@ Init asks one question at a time in Terminal. A value in brackets is the default
 
 1. **Source folder:** type `~/Code/acme/acme-shop`. Init says the folder above it is the source folder and `acme-shop` its repo.
 2. **Name** and **tickets folder:** Return for each.
-3. **Linear team** and **project:** Return takes ACM and Acme Shop.
+3. **Board kind**, **Linear team** and **project:** Return takes `linear`, ACM and Acme Shop.
 4. **Statuses:** Return takes `board`, the ones you mapped in step 3.
 5. **GitHub repo:** its `owner/name`, such as `ada/acme-shop`. It need not exist yet. Bollplank uses it only in runs.
 6. **Base branch:** Return.
@@ -99,6 +99,15 @@ In the Claude app, click **Code** and start a new session in the project folder:
 5. **Approve.** `I approve brief v2.`, with the version the lead names. Only the approver's own words count. The lead posts the approval, updates the Approval line and moves `ACM-1` to Ready.
 
 Every step shows up on the issue in Linear. Codex works the same way in the ChatGPT app. It asks to run `bollplank critic` outside its sandbox. Allow it.
+
+## Using Jira instead
+
+The steps are the same, with these changes.
+
+- **Section 1.** In Jira, create a project named **Acme** with the key **ACM** on your site, such as `acme.atlassian.net`. In the project, open **Project settings**, then **Workflows**, and add **Draft** and **Ready** in the To Do category and **Acceptance** in the In Progress category. Keep In Progress and Done. Jira's MCP tools cannot create a status, so this is done by hand.
+- **Step 2.** Type `jira` for the board kind. If init asks to add the Atlassian MCP server, `https://mcp.atlassian.com/v2/mcp`, answer `y` and sign in to Atlassian in the browser.
+- **Step 3.** Pick the site, then the project key `ACM`, then the statuses. Init then asks for an optional Confluence space key. With a space, the release notes go to a "Release notes" page there. Without one, they stay in the ticket's comment and your CHANGELOG. Init creates no project and no space, so both must exist first.
+- **Section 5.** On Jira the critic only reads. It replies with its critique, and the lead posts that text unchanged as a comment, reads it back and runs `bollplank critic confirm`. You see the same comment on the issue.
 
 ## Next
 
