@@ -1,7 +1,9 @@
 # ACM-8 plan: Jira as a second board kind
 
-Status: v1
+Status: v2
 Brief: ACM-8 brief v4, approved by joxzaren on 2026-11-10.
+
+Approver decision during the run, 2026-11-10: on a Jira board the critic is reply only. It gets read tools only, replies with its critique, and the lead posts that text unchanged. Neither client can limit `addOrEditJiraIssueComment` to adding before the tool runs, since the critic's hooks are switched off on purpose. This replaces the brief's "add a comment" in the critic's Jira tool list, and the brief's post then fail test applies to Linear only.
 
 ## Facts from Atlassian, read on 10 November 2026
 
@@ -39,17 +41,19 @@ From https://support.atlassian.com/atlassian-rovo-mcp-server/docs/supported-tool
 - `addLinearMcp` becomes `addBoardMcp(kind)` with a wrapper.
 - `review({ board })`: the critic keeps the board's server only.
   - Linear: unchanged.
-  - Jira, Claude Code: allow rules name the tools one by one: `getJiraIssue`, `addOrEditJiraIssueComment`, `executeRead`. Everything else on the server is denied by name prefix, including `executeWrite`, `executeDestructive`, `discover` and every Confluence tool.
-  - Jira, Codex: `enabled_tools` on the kept server is the same three tools.
-  - Event checks in both: `executeRead` is allowed only when its inner tool is `listJiraIssueComments`. `addOrEditJiraIssueComment` is allowed only without a comment id, so the critic adds and never edits. Any other call fails the round as `critic-used-tools`, and the reply is not used.
+  - Jira, Claude Code: allow rules name the tools one by one: `getJiraIssue` and `executeRead`. Everything else on the server is denied by name, including `addOrEditJiraIssueComment`, `executeWrite`, `executeDestructive`, `discover` and every Confluence tool. The critic has no write tool at all.
+  - Jira, Codex: `enabled_tools` on the kept server is the same two tools, and the kept server does not get `default_tools_approval_mode="approve"`, so any write would be refused by `approval_policy="never"` as well.
+  - Event checks in both: `executeRead` is allowed only when its inner tool is `listJiraIssueComments`. Any other call fails the round as `critic-used-tools`, and the reply is not used.
+  - Reply only: on Jira the wrapper expects no post. `review` returns the reply text with `posted: false` and `mode: "reply"`. The critic prompt for Jira says to reply with the critique and not to post it. `bollplank-critique` then posts the text unchanged with the lead's own Jira tools, reads it back, and the round counts from the board as any critique does. The wrapper's round check reads that critique from the board on the next call, as it does today.
 - Fix texts come from `BOARDS[kind]`.
 
 ### Critic evidence (lib/commands/critic.mjs)
 
 - `run` resolves the kind from `--project` with `kindOf`, and passes it to `review` and to the prompt as `{BOARD}`.
-- `boardKind(tool, args, kind)`: per kind tables. Jira: `getJiraIssue` is the issue read. `executeRead` of `listJiraIssueComments` is the comments read. `getJiraIssue` with comments in its result also counts as the comments read. `addOrEditJiraIssueComment` is the post.
-- `namesIssue` accepts `issueIdOrKey`. `resultIssue` accepts `key`. The posted text is read from `commentBody` or `body`.
-- The existing post then fail path, which counts a posted critique once and does not post again on retry, works for Jira through the same `boardWork` result. A test proves it.
+- `boardKind(tool, args, kind)`: per kind tables. Jira: `getJiraIssue` is the issue read. `executeRead` of `listJiraIssueComments` is the comments read. Comments embedded in a `getJiraIssue` result never count, since they may be one page only.
+- Every comment is read: on Jira the comments read counts only when the pages seen cover the whole list, that is the last page's result says `isLast: true`, or `startAt` plus the comments returned equals `total`. Otherwise the round is `board-unreachable`.
+- `namesIssue` accepts `issueIdOrKey`. `resultIssue` accepts `key`.
+- No post is looked for on Jira. The existing post then fail path stays for Linear and is unchanged.
 
 ### Prompts
 
@@ -57,8 +61,13 @@ From https://support.atlassian.com/atlassian-rovo-mcp-server/docs/supported-tool
 
 ### init and doctor
 
-- init: a new first question in step 3, `kind`, default `linear`. A project added with `askProject` gets `projects.<name>.kind`, default the top level kind. Step 2 probes the kinds that have been chosen. A Linear only setup gets exactly the questions it gets today, in the same order, so existing answer files keep working.
-- Jira questions: site (from `getAccessibleAtlassianResources`), project key, statuses, optional Confluence space. The cloud id and project id are saved from the probe's tool results.
+- init sequence:
+  1. Step 2 opens with the question `kind`, default `linear`. An answer file without `kind` gets `linear`, so it runs exactly as today.
+  2. Step 2 then probes that kind only. A Jira setup never probes Linear.
+  3. Step 3 asks that kind's questions. Linear: team, project, statuses as today. Jira: site (from `getAccessibleAtlassianResources`), project key, statuses, then the optional space.
+  4. After a Jira project or space is chosen, init reads that project's statuses and the space again with the same read only probe, as it does today for a late Linear project.
+  5. `askProject` asks `projects.<name>.kind`, default the top level kind. When that kind has not been probed in this init run, init probes it then, offering to add its MCP server, and caches the result per kind. A Linear project added to a Jira setup works the same way.
+- The cloud id and project id are saved from the probe's tool results, never typed.
 - New answer keys: `kind`, `projects.<name>.kind`, `addBoard.<kind>.<client>` (with `addLinear.<client>` still read), `space`, `projects.<name>.space`.
 - doctor: probe every kind the config uses, with check ids `<kind>.<client>` and `<kind>`. `linear.*` ids stay as they are. Board checks group by kind, then team and project. For Jira they check site, project key, cloud id, project id, each status, and the space when set.
 
@@ -67,13 +76,17 @@ From https://support.atlassian.com/atlassian-rovo-mcp-server/docs/supported-tool
 - `BOARD_NAMES.jira = 'Jira'`. `run.mjs` passes the project's kind.
 - The Jira readback has the same shape: `id` is the issue key, `teamId` the cloud id, `projectId` the numeric project id, and `description` the description as read with markdown format. Identity and exact text checks stay as they are.
 
+### Safe write helper (new, lib/commands/board.mjs)
+
+- `bollplank board safe-write jira --adf <file>`: reads an ADF document and lists any node or mark type outside the round trip list above. JSON result `{ok, unsupported: [...]}`. Exit 0 only when the list is empty, and also for an empty or missing description. A file that is not ADF fails. It never touches the network.
+
 ### Skills and references
 
 - `skills/bollplank-board/references/jira.md`, one row per operation:
   - Read the issue: `getJiraIssue` with `responseContentFormat: "markdown"` and the comment field.
   - Read the comments: `executeRead` of `listJiraIssueComments`, every page, markdown.
   - Create the issue: `createJiraIssue` in the project key, then transition to the draft status.
-  - Write the description: `editJiraIssue` with `contentFormat: "markdown"`, then read back and compare exactly. If the text does not compare equal, stop and tell the approver. No normalising.
+  - Write the description: first read the description as ADF with `responseContentFormat: "adf"`, save it to a file, and run `bollplank board safe-write jira --adf <file>`. It exits 0 only when every ADF node is one that markdown round trips (doc, paragraph, text with strong, em, code and link marks, heading, bulletList, orderedList, listItem, codeBlock, rule, hardBreak, blockquote). Any other node, such as media, mention, panel, table or status, makes it exit non zero with the node types, and the skill stops and tells the approver without writing. Then `editJiraIssue` with `contentFormat: "markdown"`, read back as markdown and compare exactly. If it differs, stop and tell the approver. No normalising.
   - Post a comment: `addOrEditJiraIssueComment` without a comment id. Update a comment: the same tool with the id.
   - Set a status: `executeRead` of `listJiraIssueTransitions`, find the transition whose target status name equals the configured name, run `transitionJiraIssue`. If none reaches it in one step, stop and say which statuses are reachable.
   - Release notes: when `space` is set, `searchConfluence` for the title "Release notes" in the space, create it with `createConfluenceContent` when missing, or read it with `getConfluenceContent` and write it with `updateConfluenceContent`, new section on top. Read back and check that the old content is still there unchanged after the new section. If it is not, stop and report. Without a space, say that release notes are only in the comment and the CHANGELOG.
@@ -81,7 +94,7 @@ From https://support.atlassian.com/atlassian-rovo-mcp-server/docs/supported-tool
   - Readback: as above.
 - `skills/bollplank-board/SKILL.md`: take the kind from `bollplank context <project>`, not from the top level. Remove "the only kind is linear".
 - `skills/bollplank-accept/SKILL.md`: the release notes step follows the board reference, and skips with a sentence when the Jira project has no space.
-- `skills/bollplank-critique/SKILL.md`: "no usable board server" instead of Linear.
+- `skills/bollplank-critique/SKILL.md`: "no usable board server" instead of Linear, and the Jira reply only step: when the result has `mode: "reply"`, post the text unchanged as the critique comment with the lead's tools, read it back, and treat it as posted by the critic's round.
 
 ### Docs and release
 
@@ -98,7 +111,7 @@ The steps that can run on their own after step 1 are marked.
 3. (after 1) Critic: providers' `review`, critic.mjs, prompts, check.mjs placeholder, with Jira fakes in critic.test.mjs. Touches the providers' review path only, not the probe path in step 2.
 4. (after 2) init and doctor with their tests.
 5. (after 1) Readback: configuration-run.mjs, run.mjs, with tests.
-6. (after 1) Skills, references and docs.
+6. (after 1) Skills, references, docs, and the safe write helper with its tests.
 7. CHANGELOG, version, full gate.
 
 Steps 2 and 3 both edit the provider files, so they run one after the other, not in parallel. Steps 5 and 6 run in parallel with them.
@@ -110,10 +123,12 @@ Steps 2 and 3 both edit the provider files, so they run one after the other, not
 - Probe: a Jira read passes. `executeRead` of a Confluence tool fails. `executeWrite` fails. A server with a matching name but another URL is not used.
 - doctor: a Linear and a Jira project together pass. A missing Jira status gives the Jira steps. An unreadable space fails.
 - init: a Jira board from scratch. A Jira project added to a Linear config. An old Linear answer file still works unchanged.
-- Critic: a full Jira round counts reads and the post. A post then client failure is counted once and not posted again. `executeRead` of a Confluence tool, `executeWrite`, and a comment edit each fail as `critic-used-tools`, in both clients. A Linear round is unchanged.
+- Critic: a full Jira round counts its reads and returns the reply with `mode: "reply"` and no post. A call to `addOrEditJiraIssueComment` never reaches the fake server in either client, since it is not offered. `executeRead` of a Confluence tool and `executeWrite` each fail as `critic-used-tools`, in both clients. Comments embedded in `getJiraIssue` alone, and a comments read that stops before the last page, each fail as `board-unreachable`. An empty comments list with `isLast: true` passes. A Linear round, including post then fail, is unchanged.
+- Safe write: a plain brief in ADF passes. ADF with a media node, a mention, and a table each fail and name the node. Not ADF fails.
+- init: an answer file without `kind` produces the same calls and config as today. A Jira setup never probes Linear. A Jira project added to a Linear config probes Jira at that point.
 - Readback: a valid Jira baseline passes. The same key from another cloud id or project id is refused. A description that differs is refused.
 
 ## Risks for the run
 
 - The markdown round trip on a real Jira site cannot be proven with fakes. The board reference stops on any mismatch, so a failure is visible, not silent. The approver checks it on a real site at acceptance.
-- `executeRead` cannot be limited by inner tool in the Claude Code allow rules, only after the fact in the event check. A critic that calls a Confluence read through it has its round refused, the same rule as any other forbidden call today.
+- `executeRead` cannot be limited by inner tool in the Claude Code allow rules, only after the fact in the event check. It runs reads only, and the critic has no write tool on Jira, so a forbidden read can only be refused, never cause a change. A critic that calls a Confluence read through it has its round refused, the same rule as any other forbidden call today.
