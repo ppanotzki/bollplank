@@ -10,7 +10,7 @@ import { sandbox, fakesSkip } from './helpers.mjs';
 import { asker } from '../lib/setup/prompts.mjs';
 import * as claude from '../lib/providers/claude.mjs';
 import * as codex from '../lib/providers/codex.mjs';
-import { CONFLICTING_INNER, innerCall, isJiraRead, isOfficialUrl, JIRA_PROBE_TOOLS, judgeJira, jiraAddStatusSteps } from '../lib/setup/probe.mjs';
+import { CONFLICTING_INNER, innerCall, isJiraRead, isOfficialUrl, JIRA_PROBE_TOOLS, judgeJira, jiraAddStatusSteps, readJira, short } from '../lib/setup/probe.mjs';
 
 // The synthetic data both fakes serve. FAKE_JIRA_STATUSES replaces the statuses of every Jira
 // project, FAKE_JIRA_SPACES the Confluence spaces that can be read, comma separated.
@@ -20,19 +20,31 @@ const TEAMS_TEXT = JSON.stringify({ teams: [{ id: 't1', key: 'ACME', name: 'Acme
 const REPLY = JSON.stringify({ teams: [{ key: 'ACME', name: 'Acme', statuses, projects: ['Shop', 'Widgets'] }] });
 const jiraStatuses = (process.env.FAKE_JIRA_STATUSES || 'Draft,Ready,In Progress,Acceptance,Done').split(',');
 const spaces = (process.env.FAKE_JIRA_SPACES ?? 'ACME').split(',').filter(Boolean);
-const SITES = [{ id: 'cloud-acme', url: 'https://acme.atlassian.net', name: 'acme', scopes: ['read:jira-work'] }];
+// The v2 server's site list by default. FAKE_JIRA_SITES=flat serves the older flat shape.
+const SITES = process.env.FAKE_JIRA_SITES === 'flat'
+  ? [{ id: 'cloud-acme', url: 'https://acme.atlassian.net', name: 'acme', scopes: ['read:jira-work'] }]
+  : { data: { resources: [{ cloudId: 'cloud-acme', url: 'https://acme.atlassian.net', products: [{ id: 'jira', access: 'read-write' }, { id: 'confluence', access: 'read-write' }] }] } };
+// Every space on the site, for listConfluenceSpaces. A space in FAKE_JIRA_SPACES can also be read by key.
+const SPACE_LIST = { results: [{ id: '77', key: 'ACME', name: 'Acme space' }, { id: '78', key: 'DOCS', name: 'AcmeDocs' }].filter((x) => x.key !== 'ACME' || spaces.includes('ACME')) };
 const PROJECTS = { values: [{ id: '10001', key: 'ACME', name: 'Acme' }, { id: '10002', key: 'ACM', name: 'Acme Mobile' }], isLast: true };
 const listed = (prompt, label) => { const m = prompt.match(new RegExp('^' + label + ': (.*)\\\\.$', 'm')); return m ? m[1].split(', ') : []; };
 // The calls a Jira probe makes for its prompt, as [tool, args, result or null for an error].
 // FAKE_JIRA_CALLS: good, confluence (an executeRead of a Confluence page as well), write (an
-// executeWrite as well) or claimed (no call at all).
-const jiraCalls = (prompt) => {
+// executeWrite as well) or claimed (no call at all). FAKE_JIRA_STATUS_FAIL names a project whose
+// status call fails. FAKE_JIRA_SPACE_LIST: ok, fail or none, for the list call made after a failed
+// space read. FAKE_JIRA_NO_CONFLUENCE names the client, claude or codex, whose Confluence calls fail.
+const jiraCalls = (prompt, who) => {
   const mode = process.env.FAKE_JIRA_CALLS || 'good';
   if (mode === 'claimed') return [];
   const calls = [['getAccessibleAtlassianResources', {}, JSON.stringify(SITES)], ['executeRead', { tool: 'listJiraProjects', arguments: { cloudId: 'cloud-acme' } }, JSON.stringify(PROJECTS)]];
   // The second shape of executeRead arguments, toolName and input, for the statuses.
-  for (const key of listed(prompt, 'Projects')) calls.push(['executeRead', { toolName: 'listJiraStatuses', input: { cloudId: 'cloud-acme', projectIdOrKey: key } }, JSON.stringify([{ id: '1', name: 'Task', statuses: jiraStatuses.map((name, i) => ({ id: 's' + i, name, statusCategory: { key: 'indeterminate' } })) }])]);
-  for (const key of listed(prompt, 'Spaces')) calls.push(['executeRead', { tool: 'getConfluenceSpace', arguments: { cloudId: 'cloud-acme', spaceKey: key } }, spaces.includes(key) ? JSON.stringify({ id: '77', key, name: 'Acme space' }) : null]);
+  for (const key of listed(prompt, 'Projects')) calls.push(['executeRead', { toolName: 'listJiraStatuses', input: { cloudId: 'cloud-acme', projectIdOrKey: key } }, key === process.env.FAKE_JIRA_STATUS_FAIL ? null : JSON.stringify([{ id: '1', name: 'Task', statuses: jiraStatuses.map((name, i) => ({ id: 's' + i, name, statusCategory: { key: 'indeterminate' } })) }])]);
+  // The v2 shape, with the site named by its host as the server allows.
+  const confluence = process.env.FAKE_JIRA_NO_CONFLUENCE !== who;
+  const wanted = listed(prompt, 'Spaces');
+  for (const key of wanted) calls.push(['executeRead', { name: 'getConfluenceSpace', cloudId: 'acme.atlassian.net', inputs: { spaceIdOrKey: key } }, confluence && spaces.includes(key) ? JSON.stringify({ id: '77', key, name: 'Acme space' }) : null]);
+  const listMode = process.env.FAKE_JIRA_SPACE_LIST || 'ok';
+  if (wanted.some((k) => !confluence || !spaces.includes(k)) && listMode !== 'none') calls.push(['executeRead', { name: 'listConfluenceSpaces', cloudId: 'cloud-acme', inputs: { limit: 250 } }, confluence && listMode === 'ok' ? JSON.stringify(SPACE_LIST) : null]);
   if (mode === 'confluence') calls.push(['executeRead', { tool: 'getConfluencePage', arguments: { cloudId: 'cloud-acme', pageId: '1' } }, '{"title":"Release notes"}']);
   if (mode === 'write') calls.push(['executeWrite', { tool: 'createJiraIssue', arguments: { cloudId: 'cloud-acme' } }, '{"key":"ACME-9"}']);
   return calls;
@@ -47,6 +59,7 @@ const jiraUrl = (mode) => ({ real: 'https://mcp.atlassian.com/v2/mcp', v1: 'http
 // works. Tool calls are permitted the way Claude Code permits them: a deny rule wins, then an allow
 // rule, with * wildcards, and in dontAsk anything not allowed is refused.
 const FAKE_CLAUDE = `
+const WHO = 'claude';
 const fs = require('node:fs');
 const path = require('node:path');
 const args = process.argv.slice(2);
@@ -97,7 +110,7 @@ if (args.includes('--input-format')) {
     emit({ type: 'system', subtype: 'init' });
     const isJira = input.includes('Atlassian tools');
     const server = isJira ? (jira === 'connector' ? 'claude_ai_Atlassian' : 'atlassian') : linear === 'added' ? 'linear' : 'claude_ai_Linear';
-    const calls = isJira ? (jira === 'none' ? [] : jiraCalls(input)) : linear === 'none' ? [] : [['list_teams', {}, TEAMS_TEXT]];
+    const calls = isJira ? (jira === 'none' ? [] : jiraCalls(input, WHO)) : linear === 'none' ? [] : [['list_teams', {}, TEAMS_TEXT]];
     calls.forEach(([name, input, text], i) => {
       const tool = 'mcp__' + server + '__' + name;
       const id = 'toolu_' + (i + 1);
@@ -114,6 +127,7 @@ if (args.includes('--input-format')) {
 `;
 
 const FAKE_CODEX = `
+const WHO = 'codex';
 const fs = require('node:fs');
 const path = require('node:path');
 const args = process.argv.slice(2);
@@ -157,7 +171,7 @@ process.stdin.on('end', () => {
   const isJira = input.includes('Atlassian tools');
   const server = isJira ? 'atlassian' : 'linear';
   const live = servers.some((s) => s.name === server);
-  const calls = !live ? [] : isJira ? jiraCalls(input) : [['list_teams', {}, TEAMS_TEXT]];
+  const calls = !live ? [] : isJira ? jiraCalls(input, WHO) : [['list_teams', {}, TEAMS_TEXT]];
   calls.forEach(([tool, a, text], i) => {
     const offered = !off(server) && (allowed(server) ?? [tool]).includes(tool);
     const failed = !offered || text === null;
@@ -378,12 +392,13 @@ test('init sets up a Jira board from scratch, saves the ids from the tools and n
 
 test('a missing Jira status shows the Jira steps, and an unreadable space is kept and named', { skip: fakesSkip }, (t) => {
   const b = box(t, { linear: 'none' });
-  const r = b.init(withSource(b, { kind: 'jira', team: SITE, project: 'ACME', space: 'GONE', addProject: false }), ['--json'], { FAKE_JIRA_STATUSES: 'To Do,Draft,Ready,In Progress,Done' });
+  // The space list fails too, so no client can tell whether GONE exists.
+  const r = b.init(withSource(b, { kind: 'jira', team: SITE, project: 'ACME', space: 'GONE', addProject: false }), ['--json'], { FAKE_JIRA_STATUSES: 'To Do,Draft,Ready,In Progress,Done', FAKE_JIRA_SPACE_LIST: 'fail' });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   const said = text(r);
   assert.match(said, /ACME lacks Acceptance\. Add it now, or map its state to a status the project has\./);
   assert.match(said, /To add it: Open the Jira project ACME, go to Project settings, then Workflows\. Add "Acceptance" in In Progress\. Then answer y when init asks to check Jira again\./);
-  assert.match(said, /The Atlassian tools did not return the space GONE on acme\.atlassian\.net\. Kept it as typed\./);
+  assert.match(said, /No client could read the Confluence spaces of acme\.atlassian\.net, so GONE is kept as typed\./);
   assert.equal(b.config().board.space, 'GONE');
   assert.equal(jiraAddStatusSteps('ACME', 'draft', 'Draft'), 'Open the Jira project ACME, go to Project settings, then Workflows. Add a status named "Draft" in the To Do category.');
 });
@@ -644,4 +659,83 @@ test('the kept answers hold a key named __proto__ as an answer, and never touch 
   const kept = io.answered();
   assert.equal(Object.hasOwn(kept.missingProject, '__proto__'), true);
   assert.deepEqual(JSON.parse(JSON.stringify(kept)), JSON.parse('{"team":"ACME","missingProject":{"__proto__":{"polluted":"other"}},"projects":{"constructor":{"team":"ACME"}}}'));
+});
+
+// The shapes Atlassian's v2 server uses, as read from its tool schemas: the site list wrapped in
+// data.resources with cloudId, and executeRead with name, a top level cloudId and inputs.
+test('readJira reads the v2 site list and executeRead shape, with a site named by its host', () => {
+  const ctx = { servers: ['atlassian'], space: true };
+  const calls = [
+    { name: 'mcp__atlassian__getAccessibleAtlassianResources', args: {}, ok: true, text: JSON.stringify({ data: { resources: [{ cloudId: 'cloud-acme', url: 'https://acme.atlassian.net', products: [{ id: 'jira', access: 'read-write' }] }] } }) },
+    { name: 'mcp__atlassian__executeRead', args: { name: 'listJiraProjects', cloudId: 'cloud-acme', inputs: {} }, ok: true, text: JSON.stringify({ values: [{ id: '10001', key: 'ACME', name: 'Acme' }] }) },
+    { name: 'mcp__atlassian__executeRead', args: { name: 'listJiraStatuses', cloudId: 'https://acme.atlassian.net/jira', inputs: { projectIdOrKey: 'ACME' } }, ok: true, text: JSON.stringify([{ statuses: [{ name: 'Draft', statusCategory: { key: 'new' } }] }]) },
+    { name: 'mcp__atlassian__executeRead', args: { name: 'listConfluenceSpaces', cloudId: 'acme.atlassian.net', inputs: { limit: 250 } }, ok: true, text: JSON.stringify(SPACES) },
+  ];
+  assert.deepEqual(innerCall(calls[1].args), { tool: 'listJiraProjects', args: { cloudId: 'cloud-acme' } });
+  assert.ok(calls.every((c) => isJiraRead(c, ctx)));
+  const read = readJira(calls);
+  // A product's id is never a site.
+  assert.deepEqual(read.sites, [{ cloudId: 'cloud-acme', site: 'acme.atlassian.net' }]);
+  assert.equal(read.project('cloud-acme', 'ACME').id, '10001');
+  assert.equal(read.status('cloud-acme', read.project('cloud-acme', 'ACME'), 'Draft'), 'Draft');
+  assert.deepEqual(read.spaceList('cloud-acme'), [{ key: 'ACME', name: 'Acme space' }, { key: 'DOCS', name: 'AcmeDocs' }]);
+  assert.equal(read.spaceList('cloud-other'), null);
+  // The list call is allowed only when a space is configured.
+  assert.equal(isJiraRead(calls[3], { servers: ['atlassian'] }), false);
+});
+const SPACES = { results: [{ id: '77', key: 'ACME', name: 'Acme space' }, { id: '78', key: 'DOCS', name: 'AcmeDocs' }] };
+
+test('short keeps a whole word and marks the cut', () => {
+  const long = `${'word '.repeat(60)}rather than`;
+  const s = short(long);
+  assert.ok(s.length <= 200);
+  assert.ok(s.endsWith('word…'), s.slice(-20));
+  assert.equal(short('  a  short\nmessage '), 'a short message');
+});
+
+test('the flat site list still gives the site and its cloud id', { skip: fakesSkip }, (t) => {
+  const b = box(t);
+  const r = b.init(withSource(b, { kind: 'jira', team: SITE, project: 'ACME', addProject: false }), ['--json'], { FAKE_JIRA_SITES: 'flat' });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(b.config().board.teamId, 'cloud-acme');
+  assert.equal(byId({ json: r.json.doctor })[`board.jira.cloudId.${SITE}`]?.ok, true);
+});
+
+test('a space set by its name fails only the space check in doctor, whose fix names the key', { skip: fakesSkip }, (t) => {
+  const b = box(t);
+  assert.equal(b.init(withSource(b, { kind: 'jira', team: SITE, project: 'ACME', addProject: false })).status, 0);
+  const c = b.config();
+  c.board.space = 'AcmeDocs';
+  writeFileSync(join(b.s.bollplank, 'config.json'), JSON.stringify(c, null, 2));
+  const r = b.s.run(['doctor', '--json'], b.env);
+  const d = byId(r);
+  for (const id of ['jira.claude', 'jira.codex', 'jira', `board.jira.site.${SITE}`, `board.jira.cloudId.${SITE}`, `board.jira.project.${SITE}.ACME`, `board.jira.projectId.${SITE}.ACME`, `board.jira.status.${SITE}.ACME.done`]) assert.equal(d[id]?.ok, true, id);
+  const space = d[`board.jira.space.${SITE}.AcmeDocs`];
+  assert.equal(space.ok, false);
+  assert.match(space.detail, /AcmeDocs is the name of the space DOCS/);
+  assert.equal(space.fix, 'Set board.space in the config to DOCS, the space\'s key.');
+});
+
+test('a failed status read keeps the project and its id, and fails only its statuses', { skip: fakesSkip }, (t) => {
+  const b = box(t);
+  assert.equal(b.init(withSource(b, { kind: 'jira', team: SITE, project: 'ACME', addProject: false })).status, 0);
+  const d = byId(b.s.run(['doctor', '--json'], { ...b.env, FAKE_JIRA_STATUS_FAIL: 'ACME' }));
+  for (const id of ['jira.claude', 'jira.codex', `board.jira.project.${SITE}.ACME`, `board.jira.projectId.${SITE}.ACME`]) assert.equal(d[id]?.ok, true, id);
+  assert.equal(d[`board.jira.status.${SITE}.ACME.draft`]?.ok, false);
+});
+
+test('init saves a space typed by its name as its key, asks again for an unknown one, and tries the next client', { skip: fakesSkip }, (t) => {
+  const b = box(t);
+  const r = b.init(withSource(b, { kind: 'jira', team: SITE, project: 'ACME', space: 'acmedocs', addProject: false }));
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(b.config().board.space, 'DOCS');
+  assert.match(text(r), /acmedocs is the name of the space DOCS on acme\.atlassian\.net, so its key DOCS is saved\./);
+  // A space neither listed by key nor by name stops an answers file at that key.
+  const gone = b.init(withSource(b, { kind: 'jira', team: SITE, project: 'ACME', space: 'NOPE', addProject: false, writeConfig: true }));
+  assert.equal(gone.json.failure, 'usage');
+  assert.match(gone.json.detail, /^space: NOPE is neither the key nor the name of a Confluence space on acme\.atlassian\.net that Claude Code can read\./);
+  // The first client cannot read Confluence, so the second one's lookup counts.
+  const next = b.init(withSource(b, { kind: 'jira', team: SITE, project: 'ACME', space: 'AcmeDocs', addProject: false, writeConfig: true }), ['--json'], { FAKE_JIRA_NO_CONFLUENCE: 'claude' });
+  assert.equal(next.status, 0, next.stdout + next.stderr);
+  assert.equal(b.config().board.space, 'DOCS');
 });
