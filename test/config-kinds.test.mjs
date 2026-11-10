@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BOARDS, kindOf, missingInNewTeam, suggestedStatuses } from '../lib/boards.mjs';
-import { statusKeyOf, validate, withDefaults } from '../lib/config.mjs';
+import { pinProjects, statusKeyOf, validate, withDefaults } from '../lib/config.mjs';
 import { sandbox } from './helpers.mjs';
 
 const repos = { 'acme-api': { github: 'acme/acme-api', checks: ['checks'] } };
@@ -235,4 +235,54 @@ test('a Jira project with its own ids in a Linear config keeps them in context',
   const shop = s.run(['context', 'acme-shop']).json;
   assert.equal(shop.board.teamId, 'linear-team');
   assert.equal(shop.board.projectId, 'linear-project');
+});
+
+// A Linear config whose projects inherit from the top level board in each way: everything, the
+// statuses only, nothing but the ids, and one that already sets its own kind.
+const linearWithIds = () => ({
+  approver: { name: 'Ada' },
+  board: { kind: 'linear', team: 'ACME', project: 'Shop', teamId: 't1', projectId: 'p1', statuses: { acceptance: 'Review' } },
+  projects: {
+    'acme-shop': { source: '/s', tickets: '/t', repos },
+    'acme-web': { source: '/s', tickets: '/t', repos, board: { team: 'ACME', project: 'Widgets' } },
+    'acme-ops': { source: '/s', tickets: '/t', repos, board: { team: 'OPS', project: 'Ops', statuses: { draft: 'Idea' } } },
+    'acme-portal': { source: '/s', tickets: '/t', repos, board: { kind: 'jira', team: 'acme.atlassian.net', project: 'ACM', statuses: jiraStatuses } },
+  },
+});
+
+test('pinProjects writes out the board each project resolved to, when the top level kind changes', () => {
+  const prev = linearWithIds();
+  const linearFive = { ...suggestedStatuses('linear'), acceptance: 'Review' };
+  const { projects, pinned } = pinProjects(prev, 'jira');
+  assert.deepEqual(projects['acme-shop'].board, { kind: 'linear', team: 'ACME', project: 'Shop', teamId: 't1', projectId: 'p1', statuses: linearFive });
+  // Another project on the same team takes the teamId, never the projectId.
+  assert.deepEqual(projects['acme-web'].board, { kind: 'linear', team: 'ACME', project: 'Widgets', teamId: 't1', statuses: linearFive });
+  // Another team takes no id, and its own status names stay over the top level ones.
+  assert.deepEqual(projects['acme-ops'].board, { kind: 'linear', team: 'OPS', project: 'Ops', statuses: { ...linearFive, draft: 'Idea' } });
+  // A project the new kind fits is untouched.
+  assert.equal(projects['acme-portal'], prev.projects['acme-portal']);
+  assert.deepEqual(pinned.map((p) => p.name), ['acme-shop', 'acme-web', 'acme-ops']);
+  // Everything else on the project is kept.
+  assert.equal(projects['acme-shop'].source, '/s');
+  // With a Jira top level board the pinned config validates, and each project resolves as before.
+  const next = { ...prev, board: { kind: 'jira', team: 'acme.atlassian.net', project: 'ACME' }, projects };
+  assert.deepEqual(validate(next), []);
+  const before = withDefaults(prev, '/');
+  const after = withDefaults(next, '/');
+  for (const n of ['acme-shop', 'acme-web', 'acme-ops']) assert.deepEqual(after.projects[n].board.statuses, before.projects[n].board.statuses, n);
+});
+
+test('pinProjects changes nothing when the kind stays, and keeps the shared space of a Jira project', () => {
+  const prev = linearWithIds();
+  const same = pinProjects(prev, 'linear');
+  assert.deepEqual(same.pinned, []);
+  assert.deepEqual(same.projects, prev.projects);
+  // Jira to Linear: the Jira project keeps the site's ids and the space it shared.
+  const j = { ...jira(), board: { ...jira().board, teamId: 'cloud-acme', projectId: '10001' } };
+  const { projects, pinned } = pinProjects(j, 'linear');
+  assert.deepEqual(projects['acme-shop'].board, { kind: 'jira', team: 'acme.atlassian.net', project: 'ACME', teamId: 'cloud-acme', projectId: '10001', space: 'ACME', statuses: jiraStatuses });
+  assert.deepEqual(pinned, [{ name: 'acme-shop', kind: 'jira', team: 'acme.atlassian.net', project: 'ACME' }]);
+  assert.deepEqual(validate({ ...j, board: { kind: 'linear', team: 'ACME', project: 'Shop' }, projects }), []);
+  // No config, or no projects, pins nothing.
+  assert.deepEqual(pinProjects(null, 'jira'), { projects: {}, pinned: [] });
 });

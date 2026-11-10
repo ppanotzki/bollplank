@@ -534,3 +534,97 @@ process.exit(0);`;
   assert.equal(codex.addBoardMcp('jira', { bin: codexBin, env: { ...s.env, FAKE_GET: JSON.stringify({ name: 'atlassian', transport: { type: 'streamable_http', url: official } }) }, stdio: 'ignore' }).ok, true);
   assert.equal(logins().length, 2);
 });
+
+// A Linear config the way the ACM-9 report had it: projects with no kind of their own, one that
+// inherits everything, one on another project with its own statuses, and one with no board at all.
+function linearConfig(t) {
+  const b = box(t);
+  assert.equal(b.init(withSource(b, { addProject: true })).status, 0);
+  const c = b.config();
+  c.board = { ...c.board, teamId: 't1', projectId: 'p1', statuses: { ...c.board.statuses, acceptance: 'Review' } };
+  const shop = c.projects['acme-shop'];
+  c.projects['acme-web'] = { ...shop, board: { team: 'ACME', project: 'Widgets', statuses: { draft: 'Idea' } } };
+  c.projects['acme-docs'] = { ...shop };
+  delete c.projects['acme-docs'].board;
+  writeFileSync(join(b.s.bollplank, 'config.json'), JSON.stringify(c, null, 2));
+  return b;
+}
+const NAMES = ['acme-shop', 'acme-web', 'acme-docs'];
+const boardOf = (b, name) => b.s.run(['context', name]).json.board;
+
+test('switching the board to Jira keeps the Linear projects on the board they had, and adds a Jira one', { skip: fakesSkip }, (t) => {
+  const b = linearConfig(t);
+  const before = Object.fromEntries(NAMES.map((n) => [n, boardOf(b, n)]));
+  const mobile = join(b.s.root, 'code', 'mobile');
+  mkdirSync(mobile, { recursive: true });
+  execFileSync('git', ['init', '-q', '-b', 'main', join(mobile, 'acme-mobile')]);
+  // A lowercase key on the top level board, and the project's name for the new Jira project.
+  const r = b.init({ approver: 'Ada', kind: 'jira', team: SITE, project: 'acme', space: '', addProject: true, writeConfig: true, source: mobile, projectName: 'acme-mobile', tickets: join(mobile, 'Tickets'), github: { 'acme-mobile': 'acme/acme-mobile' }, projects: { 'acme-mobile': { kind: 'jira', team: SITE, project: 'Acme Mobile', mapping: 'board' } } });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const c = b.config();
+  assert.equal(c.board.kind, 'jira');
+  assert.equal(c.board.project, 'ACME');
+  assert.equal(c.projects['acme-mobile'].board.project, 'ACM');
+  for (const n of NAMES) {
+    assert.equal(c.projects[n].board.kind, 'linear', n);
+    assert.deepEqual(boardOf(b, n), before[n], n);
+  }
+  const said = text(r);
+  assert.match(said, /acme-shop stays on its Linear board, Linear team ACME, project Shop\./);
+  assert.match(said, /acme-web stays on its Linear board, Linear team ACME, project Widgets\./);
+  assert.match(said, /Saved the project key as ACME, the way Jira spells it\./);
+  assert.match(said, /Acme Mobile is the Jira project ACM, so its key ACM is saved\./);
+  assert.equal(existsSync(join(b.s.bollplank, 'config.answers.json')), false);
+});
+
+test('a Jira answer that is not a site, a project key or a space key stops init at that question', { skip: fakesSkip }, (t) => {
+  const b = box(t);
+  const cases = [
+    [{ team: 'acme.example.com', project: 'ACME' }, /^team: acme\.example\.com is not a Jira site/],
+    [{ team: SITE, project: 'acme-dev' }, /^project: acme-dev is not a Jira project key/],
+    [{ team: SITE, project: 'Acme Shop' }, /^project: Acme Shop is not a Jira project key/],
+    [{ team: SITE, project: 'ACME', space: 'no space' }, /^space: no space is not a Confluence space key/],
+  ];
+  for (const [answers, message] of cases) {
+    const r = b.init(withSource(b, { kind: 'jira', addProject: false, ...answers }));
+    assert.notEqual(r.status, 0);
+    assert.equal(r.json.failure, 'usage');
+    assert.match(r.json.detail, message);
+    assert.equal(existsSync(join(b.s.bollplank, 'config.json')), false);
+  }
+  // A site the tools list no projects for takes a typed key in capitals.
+  const r = b.init(withSource(b, { kind: 'jira', team: 'globex.atlassian.net', project: 'globex', addProject: false }));
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(b.config().board.project, 'GLOBEX');
+  assert.match(text(r), /Saved the project key as GLOBEX\./);
+});
+
+test('a config that still does not validate keeps the answers, and a second run with them saves', { skip: fakesSkip }, (t) => {
+  const b = linearConfig(t);
+  // A Linear board with no team set yet leaves acme-shop nothing to keep once the board is Jira.
+  const c = b.config();
+  delete c.board.team;
+  delete c.projects['acme-shop'].board.team;
+  writeFileSync(join(b.s.bollplank, 'config.json'), JSON.stringify(c, null, 2));
+  const old = readFileSync(join(b.s.bollplank, 'config.json'), 'utf8');
+  const r = b.init({ approver: 'Ada', kind: 'jira', team: SITE, project: 'ACME', space: 'ACME', addProject: false });
+  assert.notEqual(r.status, 0);
+  assert.equal(r.json.failure, 'config');
+  const kept = join(b.s.bollplank, 'config.answers.json');
+  assert.match(r.json.detail, /projects\.acme-shop\.board: a linear board in a config whose board is jira must set its own team/);
+  assert.ok(r.json.detail.includes(`Your answers are in ${kept}.`));
+  assert.ok(r.json.detail.includes(`bollplank init --answers ${kept}`));
+  assert.equal(readFileSync(join(b.s.bollplank, 'config.json'), 'utf8'), old);
+  const answers = JSON.parse(readFileSync(kept, 'utf8'));
+  assert.equal(answers.kind, 'jira');
+  assert.equal(answers.project, 'ACME');
+  assert.equal(answers.approver, 'Ada');
+  // Once the two projects that inherited the team name it, the kept answers save as they are.
+  c.projects['acme-shop'].board.team = 'ACME';
+  c.projects['acme-docs'].board = { team: 'ACME' };
+  writeFileSync(join(b.s.bollplank, 'config.json'), JSON.stringify(c, null, 2));
+  const again = b.s.run(['init', '--answers', kept, '--json'], b.env);
+  assert.equal(again.status, 0, again.stdout + again.stderr);
+  assert.equal(b.config().board.kind, 'jira');
+  assert.equal(b.config().projects['acme-shop'].board.team, 'ACME');
+});

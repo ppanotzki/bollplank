@@ -93,6 +93,10 @@ An illustration of the keys, not a setup to copy as it is:
 }
 ```
 
+When the top level board kind changes, every existing project stays on the board it had, and init writes that board out on the project. To move a project to the new board, set it up again in step 5.
+
+On a terminal, a Jira site, project key or space key that is not valid is asked again. With an answers file it stops init with `usage`, naming the key. When the answers still do not make a valid config, init writes nothing, keeps the answers in `config.answers.json` beside the config, and names it. Fix what the failure names, then run `bollplank init --answers` with that file.
+
 With an answers file, init never waits for Enter. So `missingProject` set to `session` or `linear` reads Linear up to three times at once, and init stops with `missing-project` unless the project is already there. A scripted setup creates the board project first, or names one that exists.
 
 A Jira setup in an answers file, with made up names:
