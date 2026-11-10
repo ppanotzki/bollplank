@@ -409,8 +409,23 @@ test('a Jira readback uses the issue key, cloud id and numeric project id, and n
   alter({ observedAt: '2000-01-01T00:00:00Z' });
   assert.throws(() => run('init', opts), /Jira readback must be freshly/);
   assert.equal(existsSync(f.profile.tickets), false);
-  alter({});
-  const r = run('init', opts).record;
-  assert.equal(r.ticket, 'ACM-1');
+  // Ids are compared as text, so a numeric project id matches, and a list or an object never does.
+  alter({ projectId: [10001] });
+  assert.throws(() => run('init', opts), /Jira readback identity mismatch/);
+  alter({ projectId: 10002 });
+  assert.throws(() => run('init', opts), /Jira readback identity mismatch/);
+  alter({ projectId: 10001 });
+  assert.equal(run('init', opts).record.ticket, 'ACM-1');
+});
+
+test('a Jira readback with the project id as a string passes, as the board reference writes it', (t) => {
+  const f = fixture(t);
+  f.profile.allowedTickets = ['ACM_OPS-1'];
+  f.profile.board = { kind: 'jira', teamId: '00000000-0000-4000-8000-000000000001', projectId: '10001' };
+  const run = (cmd, opts = {}) => configurationRun({ project: 'acme-ops', ticket: 'ACM_OPS-1', profile: f.profile, cmd, opts, approver: 'Ada', boardKind: 'jira' });
+  const valid = { id: 'ACM_OPS-1', teamId: f.profile.board.teamId, projectId: '10001', observedAt: new Date().toISOString(), description: readFileSync(f.brief, 'utf8') };
+  writeFileSync(f.live, JSON.stringify(valid));
+  const r = run('init', { brief: f.brief, approval: 'https://example.invalid/approval', instruction: 'synthetic run', review: 'plan', 'board-readback': f.live }).record;
+  assert.equal(r.ticket, 'ACM_OPS-1');
   assert.deepEqual(JSON.parse(readFileSync(r.baselines[0].liveEvidence.path, 'utf8')), valid);
 });

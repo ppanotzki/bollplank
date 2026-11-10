@@ -1768,8 +1768,8 @@ test('the Jira evidence needs the whole comment list without gaps, on one cloud 
   // Embedded comments alone never count, even when they hold every comment.
   assert.deepEqual(boardWork([issue], 'ACM-1', 'jira', { cloudId: 'cloud-acme' }).comments, false);
   // The numeric id from the issue read is an alias, and the issue read by its result alone counts.
-  assert.equal(boardWork([issue, comments({ issueIdOrKey: '10042' }, { startAt: 0, total: 0, isLast: true, comments: [] })], 'ACM-1', 'jira').comments, true);
-  assert.equal(boardWork([{ ...issue, args: { cloudId: 'cloud-acme', issueIdOrKey: '10042' } }, empty], 'ACM-1', 'jira').issue, true);
+  assert.equal(boardWork([issue, comments({ issueIdOrKey: '10042' }, { startAt: 0, total: 0, isLast: true, comments: [] })], 'ACM-1', 'jira', { cloudId: 'cloud-acme' }).comments, true);
+  assert.equal(boardWork([{ ...issue, args: { cloudId: 'cloud-acme', issueIdOrKey: '10042' } }, empty], 'ACM-1', 'jira', { cloudId: 'cloud-acme' }).issue, true);
   // Another issue, another cloud id, or two cloud ids with none configured never count.
   assert.equal(boardWork([{ ...issue, args: { cloudId: 'cloud-acme', issueIdOrKey: 'ACM-2' } }, empty], 'ACM-1', 'jira').issue, false);
   assert.equal(boardWork([issue, empty], 'ACM-1', 'jira', { cloudId: 'cloud-globex' }).issue, false);
@@ -1946,4 +1946,106 @@ test('a Linear round keeps its delivery, its prompt wording and its post then fa
   assert.equal(f.json.counted, true);
   assert.deepEqual(b.state('ACME-1.codex.json').rounds, { brief: 2, plan: 0, code: 0 });
   assert.equal(b.s.run(['critic', 'pending', '--ticket', 'ACME-1']).json.failure, 'no-pending');
+});
+
+test('a Jira project on another site takes no cloud id from the top level board', { skip: fakesSkip }, (t) => {
+  const b = jiraBox();
+  after(t, b);
+  const base = acmeConfig(join(b.s.root, 'src'), join(b.s.root, 'tickets'));
+  const top = { kind: 'jira', team: 'acme.atlassian.net', project: 'ACME', teamId: 'cloud-top', statuses: JIRA_STATUSES };
+  const shop = base.projects['acme-shop'];
+  b.s.config({ ...base, board: top, projects: { 'acme-shop': shop, 'acme-portal': { ...shop, tickets: join(b.s.root, 'portal-tickets'), board: { team: 'beta.atlassian.net', project: 'BETA' } } } });
+  const r = b.call({ lead: 'claude' });
+  assert.equal(r.status, 0, r.stdout);
+  const p = b.reviews().at(-1).prompt;
+  assert.match(p, /Pass beta\.atlassian\.net as the cloudId in every Jira call\./);
+  assert.equal(p.includes('cloud-top'), false);
+  // A project on the top level site keeps the top level cloud id.
+  const same = b.call({ lead: 'claude', project: 'acme-shop', ticket: 'ACM-2' });
+  assert.equal(same.status, 0, same.stdout);
+  assert.match(b.reviews().at(-1).prompt, /Pass cloud-top as the cloudId in every Jira call\./);
+});
+
+test('claude: saved settings that allow Atlassian tools beyond the critic\'s two stop the Jira critic', { skip: fakesSkip }, (t) => {
+  const b = jiraBox();
+  after(t, b);
+  const file = join(b.s.claude, 'settings.json');
+  for (const rule of ['mcp__atlassian__*', 'mcp__atlassian', 'mcp__atlassian__get*', 'mcp__atlassian__addOrEditJiraIssueComment', 'mcp__atlassian__searchJiraIssuesUsingJql']) {
+    writeFileSync(file, JSON.stringify({ permissions: { allow: [rule] } }));
+    const r = b.call({ lead: 'codex' });
+    assert.equal(r.json.failure, 'critic-unavailable', `${rule} ${r.stdout}`);
+    assert.match(r.json.detail, /beyond the critic's getJiraIssue and executeRead/);
+    assert.ok(r.json.detail.includes(rule.split('(')[0]), rule);
+    assert.match(r.json.fix, /Remove those allow rules/);
+  }
+  assert.deepEqual(b.reviews(), []);
+  assert.deepEqual(b.hits(), []);
+  // Rules that name only the critic's own tools, or another server, are fine.
+  writeFileSync(file, JSON.stringify({ permissions: { allow: ['mcp__atlassian__getJiraIssue', 'mcp__atlassian__executeRead', 'mcp__acme-files__read_file'] } }));
+  const r = b.call({ lead: 'codex' });
+  assert.equal(r.status, 0, r.stdout);
+  assert.equal(r.json.pending, true);
+});
+
+test('the Jira evidence: site, mixed issue arguments, numeric ids, cloud id case, overlapping pages and startAt', async () => {
+  const { boardWork, coversAll } = await import('../lib/commands/critic.mjs');
+  const issue = (args, result = { id: '10042', key: 'ACM-1' }) => ({ server: 'atlassian', tool: 'getJiraIssue', args: { cloudId: 'cloud-acme', issueIdOrKey: 'ACM-1', ...args }, ok: true, text: JSON.stringify(result) });
+  const page = (args, result = { startAt: 0, total: 0, isLast: true, comments: [] }) => ({ server: 'atlassian', tool: 'executeRead', args: { tool: 'listJiraIssueComments', arguments: { cloudId: 'cloud-acme', issueIdOrKey: 'ACM-1', ...args } }, ok: true, text: JSON.stringify(result) });
+  const work = (calls, ctx = { cloudId: 'cloud-acme' }) => boardWork(calls, 'ACM-1', 'jira', ctx);
+  // No configured cloud id: the one seen must be the configured site, as a host or its https link.
+  const site = (cloudId) => [issue({ cloudId }), page({ cloudId })];
+  assert.equal(work(site('other.atlassian.net'), { site: 'acme.atlassian.net' }).issue, false);
+  assert.equal(work(site('acme.atlassian.net'), {}).issue, false);
+  assert.equal(work(site('ACME.atlassian.net'), { site: 'acme.atlassian.net' }).comments, true);
+  assert.equal(work(site('https://acme.atlassian.net/'), { site: 'acme.atlassian.net' }).comments, true);
+  // Any identifying argument that names another issue makes the call not count.
+  assert.equal(work([issue({}), page({ url: 'https://acme.atlassian.net/browse/ACM-9' })]).comments, false);
+  assert.equal(work([issue({ key: 'ACM-9' }), page({})]).issue, false);
+  assert.equal(work([issue({ url: 'https://acme.atlassian.net/browse/ACM-1' }), page({ url: 'https://acme.atlassian.net/browse/ACM-1' })]).comments, true);
+  // An issue read whose result is another issue never counts, whatever it named.
+  assert.equal(work([issue({}, { id: '2', key: 'ACM-9' }), page({})]).issue, false);
+  // A numeric id given as a number, and a cloud id in another case.
+  assert.equal(work([issue({}), page({ issueIdOrKey: 10042 })]).comments, true);
+  assert.equal(work([issue({ cloudId: 'CLOUD-ACME' }), page({ cloudId: 'Cloud-Acme' })]).comments, true);
+  // Overlapping pages cover the list. A gap past the covered end does not.
+  const p = (startAt, count, total, isLast = false) => ({ startAt, count, total, isLast });
+  assert.equal(coversAll([p(0, 50, 75), p(25, 50, 75)]), true);
+  assert.equal(coversAll([p(0, 3, 9), p(2, 3, 9), p(4, 5, 9)]), true);
+  assert.equal(coversAll([p(0, 3, 9), p(4, 5, 9)]), false);
+  assert.equal(coversAll([p(1, 3, 3)]), false);
+  // startAt must be a whole number from 0, as a number or decimal digits.
+  const two = (asked, got) => [issue({}), page({ startAt: asked }, { ...(got === undefined ? {} : { startAt: got }), total: 1, isLast: true, comments: [{}] })];
+  assert.equal(work(two('0')).comments, true);
+  assert.equal(work(two(0, '0')).comments, true);
+  for (const bad of [null, '', [], true, -1, 1.5, ' 0', '0x0']) {
+    assert.equal(work(two(bad)).comments, false, `asked ${JSON.stringify(bad)}`);
+    assert.equal(work(two(0, bad)).comments, false, `page ${JSON.stringify(bad)}`);
+  }
+});
+
+test('ticket keys with an underscore are accepted by the critic', { skip: fakesSkip }, (t) => {
+  const b = jiraBox();
+  after(t, b);
+  const r = b.cmd(['pending', '--ticket', 'ACME_X-1']);
+  assert.equal(r.json.failure, 'no-pending', r.stdout);
+  assert.match(r.json.detail, /ACME_X-1/);
+  assert.equal(b.cmd(['pending', '--ticket', '_ACME-1']).json.failure, 'usage');
+});
+
+test('conflicting inner tool names are refused by both critic event checks', () => {
+  const only = { tools: ['getJiraIssue', 'executeRead'], inner: { executeRead: ['listJiraIssueComments'] } };
+  const item = (args) => ({ type: 'mcp_tool_call', server: 'atlassian', tool: 'executeRead', arguments: args });
+  const conflicting = [{ tool: 'listJiraIssueComments', toolName: 'searchJiraIssuesUsingJql' }, { tool: 'listJiraIssueComments', name: 'getConfluencePage' }, { toolName: 'listJiraIssueComments', name: 5 }];
+  for (const args of conflicting) assert.equal(codex.allowedItem(item(args), ['atlassian'], only), false, JSON.stringify(args));
+  assert.equal(codex.allowedItem(item({ tool: 'listJiraIssueComments', toolName: 'listJiraIssueComments' }), ['atlassian'], only), true);
+  const allowed = { builtIn: ['ToolSearch'], linear: ['atlassian'], tools: only.tools, inner: only.inner, denied: [], readDir: null, cwd: '/acme/neutral', home: '/home/acme' };
+  const use = (input) => ({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 't', name: 'mcp__atlassian__executeRead', input }] } });
+  for (const args of conflicting) assert.match(String(claude.toolsUsed(use(args), allowed)), /executeRead of conflicting inner tool names/);
+});
+
+test('the critique skill stops on a near match of a pending Jira round and confirms only an exact one', () => {
+  const text = readFileSync(new URL('../skills/bollplank-critique/SKILL.md', import.meta.url), 'utf8');
+  assert.match(text, /starts with "Critique of" and names the same subject, and its header has the same `Round: <n>` line and the same `Reviewer:` line/);
+  assert.match(text, /If there is one, stop\. Do not post and do not confirm\. Tell the approver/);
+  assert.match(text, /Only an exact match ever confirms a round\./);
 });

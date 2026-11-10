@@ -1,7 +1,7 @@
 # ACM-8 plan: Jira as a second board kind
 
 Status: v5
-Brief: ACM-8 brief v4, approved by joxzaren on 2026-11-10.
+Brief: ACM-8 brief v4, approved by the approver on 2026-11-10.
 
 Approver decision during the run, 2026-11-10: on a Jira board the critic is reply only. It gets read tools only, replies with its critique, and the lead posts that text unchanged. Neither client can limit `addOrEditJiraIssueComment` to adding before the tool runs, since the critic's hooks are switched off on purpose. This replaces the brief's "add a comment" in the critic's Jira tool list, and the brief's post then fail test applies to Linear only.
 
@@ -138,3 +138,5 @@ Steps 2 and 3 both edit the provider files, so they run one after the other, not
 
 - The markdown round trip on a real Jira site cannot be proven with fakes. The board reference stops on any mismatch, so a failure is visible, not silent. The approver checks it on a real site at acceptance.
 - `executeRead` cannot be limited by inner tool in the Claude Code allow rules, only after the fact in the event check. It runs reads only, and the critic has no write tool on Jira, so a forbidden read can only be refused, never cause a change. A critic that calls a Confluence read through it has its round refused, the same rule as any other forbidden call today.
+- Live acceptance check: Codex may refuse the Atlassian read tools under `approval_policy="never"` when the kept server does not get `default_tools_approval_mode="approve"`. Then the Codex critic cannot read the issue on Jira, and the round fails as board-unreachable rather than doing anything else. The approver checks a Codex critic round on a real site.
+- Live acceptance check: the critique's header lines may not round trip through Jira's markdown conversion, so a posted critique read back may differ from the stored text in whitespace. The reply only recovery in the critique skill stops and tells the approver when a comment looks like the same round but is not exactly the stored text, so a changed readback never leads to a second post.

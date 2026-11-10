@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { sandbox, fakesSkip } from './helpers.mjs';
 import * as claude from '../lib/providers/claude.mjs';
 import * as codex from '../lib/providers/codex.mjs';
-import { innerCall, isJiraRead, isOfficialUrl, JIRA_PROBE_TOOLS, judgeJira, jiraAddStatusSteps } from '../lib/setup/probe.mjs';
+import { CONFLICTING_INNER, innerCall, isJiraRead, isOfficialUrl, JIRA_PROBE_TOOLS, judgeJira, jiraAddStatusSteps } from '../lib/setup/probe.mjs';
 
 // The synthetic data both fakes serve. FAKE_JIRA_STATUSES replaces the statuses of every Jira
 // project, FAKE_JIRA_SPACES the Confluence spaces that can be read, comma separated.
@@ -480,4 +480,18 @@ test('doctor passes a Linear and a Jira project together, and fails a missing st
   assert.match(c['jira.codex'].fix, /codex mcp add atlassian --url https:\/\/mcp\.atlassian\.com\/v2\/mcp/);
   assert.equal(c.jira.ok, false);
   assert.equal(c.linear.ok, true);
+});
+
+test('an inner call whose fields name different tools is refused by the probe judge', () => {
+  const ctx = { servers: ['atlassian'] };
+  assert.deepEqual(innerCall({ tool: 'listJiraProjects', toolName: 'listJiraProjects', arguments: { cloudId: 'c' } }), { tool: 'listJiraProjects', args: { cloudId: 'c' } });
+  for (const args of [{ tool: 'listJiraProjects', toolName: 'createJiraIssue' }, { tool: 'listJiraStatuses', name: 'getConfluencePage' }, { tool_name: 'listJiraProjects', toolName: 'searchJiraIssuesUsingJql' }, { tool: 'listJiraProjects', name: 7 }]) {
+    assert.equal(innerCall(args).tool, CONFLICTING_INNER, JSON.stringify(args));
+    assert.equal(isJiraRead({ name: 'mcp__atlassian__executeRead', args }, ctx), false, JSON.stringify(args));
+  }
+  const site = { name: 'mcp__atlassian__getAccessibleAtlassianResources', ok: true, args: {}, text: JSON.stringify([{ id: 'cloud-acme', url: 'https://acme.atlassian.net' }]) };
+  const mixed = { name: 'mcp__atlassian__executeRead', ok: true, args: { tool: 'listJiraProjects', toolName: 'createJiraIssue', arguments: { cloudId: 'cloud-acme' } }, text: '{}' };
+  const r = judgeJira('Acme client', [site, mixed], JSON.stringify({ sites: [] }), ctx);
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /executeRead of conflicting inner tool names/);
 });

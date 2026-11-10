@@ -94,3 +94,22 @@ test('usage errors exit 2', (t) => {
   assert.equal(s.run(['board', 'safe-write', 'jira', '--adf', join(s.root, 'missing.json')]).status, 2);
   assert.equal(check(plainBrief).status, 0);
 });
+
+test('a heading level outside 1 to 6 fails, other attrs are fine, and a very wide or deep document is read', (t) => {
+  const { check } = setup(t);
+  for (const level of [0, 7, '2', 1.5, undefined]) {
+    const r = check(doc({ type: 'heading', attrs: level === undefined ? {} : { level }, content: [text('Brief')] }));
+    assert.equal(r.status, 1, `${level} ${r.stdout}`);
+    assert.equal(r.json.failure, 'unsupported');
+    assert.deepEqual(r.json.unsupported, [`heading level ${level === undefined ? 'missing' : level}`]);
+  }
+  const attrs = check(doc({ type: 'heading', attrs: { level: 6, localId: 'a' }, content: [text('Brief')] }, { type: 'codeBlock', attrs: { language: 'acme-lang' }, content: [text('x')] }, { type: 'paragraph', attrs: { localId: 'b' }, content: [text('y')] }));
+  assert.equal(attrs.status, 0, attrs.stdout);
+  const wide = check({ type: 'doc', version: 1, content: Array.from({ length: 200000 }, () => para(text('x'))) });
+  assert.equal(wide.status, 0, wide.stdout + wide.stderr);
+  assert.deepEqual(wide.json, { ok: true, unsupported: [] });
+  let deep = para(text('x'));
+  for (let i = 0; i < 5000; i++) deep = { type: 'blockquote', content: [deep] };
+  const d = check(doc(deep, { type: 'heading', attrs: { level: 9 }, content: [] }));
+  assert.deepEqual(d.json.unsupported, ['heading level 9']);
+});

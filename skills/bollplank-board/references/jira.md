@@ -44,6 +44,6 @@ Read the live issue with `getJiraIssue` and `responseContentFormat: "markdown"` 
 }
 ```
 
-`id` is the issue key. On Jira, `teamId` is the cloud id of the site and `projectId` the numeric id of the Jira project. They must equal `project.board.teamId` and `project.board.projectId` from `bollplank context <project>`. Keep nothing else. The helper refuses a readback older than 15 minutes, so read again rather than reuse an old file.
+`id` is the issue key. On Jira, `teamId` is the cloud id of the site and `projectId` the numeric id of the Jira project. They must equal `project.board.teamId` and `project.board.projectId` from `bollplank context <project>`. Write both ids as strings, so the project id is `"10001"`, not `10001`. The helper compares them as text, so a number Jira returns still matches. Keep nothing else. The helper refuses a readback older than 15 minutes, so read again rather than reuse an old file.
 
 The approval reference for these runs is the link of the approval comment, read from the comments as above.

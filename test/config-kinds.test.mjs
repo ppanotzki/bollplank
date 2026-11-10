@@ -147,3 +147,51 @@ test('context gives each project its resolved kind and board', (t) => {
   assert.deepEqual(both.boards['acme-web'], { kind: 'linear', team: 'ACME', project: 'Web', statuses: jiraStatuses });
   assert.deepEqual(s.run(['context', 'acme-web']).json.board, both.boards['acme-web']);
 });
+
+// A Jira config with a cloud id, project id and space, and a Jira project on another site.
+const twoSites = () => {
+  const c = jira();
+  c.board = { ...c.board, teamId: 'cloud-acme', projectId: '10001' };
+  c.projects['acme-beta'] = { source: '/s', tickets: '/t', repos, board: { team: 'beta.atlassian.net', project: 'BETA' } };
+  return c;
+};
+
+test('a Jira project on another site takes no teamId, projectId or space from the top level', async (t) => {
+  const { sharesTopBoard } = await import('../lib/boards.mjs');
+  const c = twoSites();
+  assert.equal(sharesTopBoard(c, 'acme-shop'), true);
+  assert.equal(sharesTopBoard(c, 'acme-beta'), false);
+  c.projects['acme-shop'].board = { team: 'acme.atlassian.net' };
+  assert.equal(sharesTopBoard(c, 'acme-shop'), true);
+  const s = sandbox();
+  t.after(s.clean);
+  s.config(twoSites());
+  const top = s.run(['context']).json;
+  assert.equal(top.boards['acme-beta'].space, undefined);
+  assert.equal(top.boards['acme-shop'].space, 'ACME');
+  const beta = s.run(['context', 'acme-beta']).json;
+  assert.equal(beta.board.team, 'beta.atlassian.net');
+  for (const k of ['teamId', 'projectId', 'space']) {
+    assert.equal(beta.board[k], undefined, k);
+    assert.equal(beta.project.board[k], undefined, k);
+  }
+  // Same kind and same site keeps today's inheritance.
+  const shop = s.run(['context', 'acme-shop']).json;
+  assert.equal(shop.board.teamId, 'cloud-acme');
+  assert.equal(shop.board.projectId, '10001');
+  assert.equal(shop.board.space, 'ACME');
+});
+
+test('doctor checks a Jira project on another site without the top level cloud id, project id or space', async () => {
+  const { jiraBoardChecks } = await import('../lib/commands/doctor.mjs');
+  const raw = twoSites();
+  const config = withDefaults(raw, '/');
+  const reads = [{ client: { label: 'Claude Code' }, sites: [{ site: 'acme.atlassian.net', cloudId: 'cloud-acme', projects: [{ key: 'ACME', id: '10001', statuses: Object.values(jiraStatuses) }], spaces: ['ACME'] }, { site: 'beta.atlassian.net', cloudId: 'cloud-beta', projects: [{ key: 'BETA', id: '20001', statuses: Object.values(jiraStatuses) }], spaces: [] }] }];
+  const checks = Object.fromEntries(jiraBoardChecks(config, reads, raw).map((c) => [c.id, c]));
+  assert.equal(checks['board.jira.cloudId.acme.atlassian.net'].ok, true);
+  const beta = checks['board.jira.cloudId.beta.atlassian.net'];
+  assert.equal(beta.ok, false);
+  assert.match(beta.detail, /projects\.acme-beta\.board\.teamId is not set/);
+  assert.equal(Object.keys(checks).some((id) => id.startsWith('board.jira.space.beta')), false);
+  assert.equal(checks['board.jira.space.acme.atlassian.net.ACME'].ok, true);
+});
