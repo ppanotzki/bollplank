@@ -65,7 +65,7 @@ const prompts = join(root, 'prompts');
 for (const name of ['critic.md', 'critic-same.md']) if (!existsSync(join(prompts, name))) problems.push(`prompts/${name}: missing`);
 for (const name of existsSync(prompts) ? readdirSync(prompts).filter((f) => f.startsWith('critic')) : []) {
   const text = readFileSync(join(prompts, name), 'utf8');
-  for (const p of ['{TICKET}', '{ROUND}', '{SUBJECT}', '{SUBJECT_SHORT}', '{DATE}', '{ROUND_NOTE}', '{REVIEWER}', '{MODEL}', '{WORKFLOW}', '{BODY}', '{ISSUE}', '{INSTRUCTION}']) {
+  for (const p of ['{TICKET}', '{ROUND}', '{SUBJECT}', '{SUBJECT_SHORT}', '{DATE}', '{ROUND_NOTE}', '{REVIEWER}', '{MODEL}', '{WORKFLOW}', '{BODY}', '{ISSUE}', '{BOARD}', '{INSTRUCTION}']) {
     if (!text.includes(p)) problems.push(`prompts/${name}: missing ${p}`);
   }
 }

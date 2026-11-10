@@ -24,7 +24,7 @@ For a configuration run, identify a plan by its immutable snapshot path and sha2
    - `{ROUND_NOTE}`: in round 1 "Review the whole subject." Later: "Review what changed since your last round, plus anything you missed. Your earlier rounds and the responses are in the issue's comments."
    - `{BODY}`: what the critic cannot read on the board or in the source folder, such as shared instructions that live elsewhere. The critic reads the issue, its comments and the subject itself. It may be empty.
 
-   Leave `{REVIEWER}`, `{MODEL}`, `{WORKFLOW}`, `{ISSUE}` and `{INSTRUCTION}` as they are. The wrapper fills them before the call. An instruction from the approver for the critic, such as to edit the brief, goes in a file passed with `--instruction-file`, never into the template. Write the prompt to a file in your scratch space.
+   Leave `{REVIEWER}`, `{MODEL}`, `{WORKFLOW}`, `{ISSUE}`, `{BOARD}` and `{INSTRUCTION}` as they are. The wrapper fills them before the call. An instruction from the approver for the critic, such as to edit the brief, goes in a file passed with `--instruction-file`, never into the template. Write the prompt to a file in your scratch space.
 5. **Call the critic:**
    ```
    bollplank critic --ticket <TICKET> --subject brief|plan|code --round <n> --prompt-file <file> --project <project> [--critic <Critic: line>] --lead claude|codex [--read-dir <folder>] [--instruction-file <file>]
@@ -52,7 +52,7 @@ For a configuration run, identify a plan by its immutable snapshot path and sha2
    - `client-error`: the client reported an error. A quota or usage limit arrives this way. Say so and wait.
    - `exit` with `receivedReview`: a critique arrived before the client failed. Show it to the approver. When `counted` is false it is not a round. Unless `posted` is true, run the round again. Otherwise the approver decides.
    - `ok: true` with `delivery: "reply"` is a Jira round. The critic posted nothing, and the round stays pending until you confirm it. Do these steps in order:
-     1. Run `bollplank critic pending --ticket <T>`. It prints the pending subject and round and the stored text. Use that text, not your own copy of the reply.
+     1. Run `bollplank critic pending --ticket <T>`. It prints the pending subject and round and the stored text. Use that text, not your own copy of the reply. When it says more than one critic has a round pending, add the `--lead`, `--critic` and `--project` of your critic call, here and in step 4.
      2. Read every comment on the issue (see bollplank-board). Look for one whose body is exactly that text.
      3. Only when there is none, post the text unchanged as one comment, then read it back and check that its body is exactly that text.
      4. Save the text to a file and run `bollplank critic confirm --ticket <T> --subject <s> --round <n> --text-file <file> --comment <link>` with the comment's link. It counts the round. If it fails, report it and post nothing more.

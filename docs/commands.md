@@ -44,7 +44,7 @@ Runs one critique round. The board kind comes from `--project`.
 - **Linear.** The critic reads the issue and its comments with its client's Linear tools, posts its critique as one comment, and replies with the text it posted. The command returns that text with `delivery: "posted"`.
 - **Jira.** The critic is reply only. It reads the issue with `getJiraIssue` and every page of the comments with `executeRead` of `listJiraIssueComments`, and replies with its critique. The command returns the text with `posted: false`, `delivery: "reply"` and `pending: true`. The round is not counted yet. The lead posts the text unchanged, reads it back and runs `bollplank critic confirm`.
 
-- `--prompt-file` is the prompt the lead filled from [prompts/critic.md](../prompts/critic.md) or [prompts/critic-same.md](../prompts/critic-same.md). The lead fills `{TICKET}`, `{ROUND}`, `{SUBJECT}`, `{SUBJECT_SHORT}`, `{DATE}`, `{ROUND_NOTE}` and `{BODY}`. The command fills `{REVIEWER}`, `{MODEL}`, `{WORKFLOW}`, `{ISSUE}` and `{INSTRUCTION}`.
+- `--prompt-file` is the prompt the lead filled from [prompts/critic.md](../prompts/critic.md) or [prompts/critic-same.md](../prompts/critic-same.md). The lead fills `{TICKET}`, `{ROUND}`, `{SUBJECT}`, `{SUBJECT_SHORT}`, `{DATE}`, `{ROUND_NOTE}` and `{BODY}`. The command fills `{REVIEWER}`, `{MODEL}`, `{WORKFLOW}`, `{ISSUE}`, `{BOARD}` with the board's name and `{INSTRUCTION}`. On Jira it also swaps the prompt's post sentence for one that tells the critic to reply only, to read every page of the comments from `startAt` 0, and to pass the project's cloud id (`board.teamId`, else the site) in every call.
 - `--lead` is the client of the calling session. `--critic` overrides the defaults for this call. Without it, `--project` takes that project's `critic.default`, else the top level one. `other` is the client that is not `--lead`.
 - `--read-dir` opens one source folder for reading. Without it, the critic runs in the empty `~/.bollplank/neutral`.
 - `--instruction-file` holds an instruction from the approver, such as to edit the brief. Its text fills `{INSTRUCTION}` under a line saying it comes from the approver. Without it, `{INSTRUCTION}` is empty.
@@ -61,7 +61,7 @@ Runs one critique round. The board kind comes from `--project`.
 
 **The header.** The command fills `Reviewer:`, `Model:` and `Workflow:` before the call. `Reviewer:` is `Claude Code` or `Codex`, with `, same provider, separate session` for the lead's own provider. `Model:` is the pinned `model` and `effort`. Without a pinned model it is the model this client last reported, kept in `~/.bollplank/critics/models.json` by doctor's dry run and by each critique, or `Unverified` before any report. When the client reports another model, the returned text names that one, and `modelCorrection` is `{ posted, reported }`. The posted header, the lines from `Critique of` to the first blank line, must carry all three lines. The expected values are the wrapper's `Reviewer:` and `Workflow:`, and for `Model:` the model the client reported, or the pinned line when none was reported. The returned text always has the expected header. When the posted header lacks a line or holds another value, `headerCorrection` lists each one as `{ line, posted, expected }`, with `posted` null for a missing line. The round still counts, and the lead edits the posted comment's header to the expected lines and reads it back before it relies on the round. If the edit fails, it posts the returned text as a new comment.
 
-A success has `critic`, `mode` (`other`, `same` or `named`), `delivery` (`posted` or `reply`), `ticket`, `subject`, `round`, `sessionId`, `sessionRestarted` (with `--new-session`), `model`, `verdict` (`Approve` or `Revise`), `posted` (whether a call that saves a comment on the issue succeeded), `modelCorrection` and `headerCorrection` when needed, `usage` and `text`. Every failure has `critic`, `mode`, `ticket`, `subject`, `round`, and `sessionId` once known.
+A success has `critic`, `mode` (`other`, `same` or `named`), `delivery` (`posted` or `reply`), `ticket`, `subject`, `round`, `sessionId`, `sessionRestarted` (with `--new-session`), `model`, `verdict` (`Approve` or `Revise`), `posted` (whether a call that saves a comment on the issue succeeded), `modelCorrection` and `headerCorrection` when needed, `usage` and `text`. A Jira success also has `pending: true`, and never `modelCorrection` or `headerCorrection`, since nothing was posted yet. Every failure has `critic`, `mode`, `ticket`, `subject`, `round`, and `sessionId` once known.
 
 | Failure | Meaning |
 |---|---|
@@ -84,14 +84,24 @@ Every failure after the critic started carries `posted`, and so does a `received
 ### `bollplank critic pending` and `bollplank critic confirm`
 
 ```
-bollplank critic pending --ticket <TICKET>
+bollplank critic pending --ticket <TICKET> [--lead claude|codex] [--critic other|same|claude|codex] [--project <name>]
 bollplank critic confirm --ticket <TICKET> --subject brief|plan|code --round <n> --text-file <file> --comment <link>
+  [--lead claude|codex] [--critic other|same|claude|codex] [--project <name>]
 ```
 
-For a Jira round, which the critic answers with a reply only.
+For a Jira round, which the critic answers with a reply only. Both look at every critic state of the ticket and take the one with a pending round. When more than one critic of the ticket has a round pending, add `--lead` and `--critic`, with `--project`, as in the critic call, to pick the same state that call used.
 
 - **pending** prints the pending record, `{ subject, round, sha256, file, at }`, and the stored text, after checking that the text still matches its sha256. It fails when it does not. It never starts a client. The text is kept in `~/.bollplank/critics`, in a file named after the critic's state file, `<state file name without .json>.pending-<subject>-<round>.md`, so every ticket, provider and mode has its own.
 - **confirm** runs after the lead posts the text unchanged and reads it back. The sha256 of `--text-file` must equal the pending one, and the subject and round must match, or it fails and nothing changes. On success the round is counted, as a posted round is, and the pending record and its file are cleared. `--comment` is the link of the posted comment.
+
+| Failure | Meaning |
+|---|---|
+| `usage` | A missing or bad option, a text file that cannot be read, or more than one pending round without `--lead` and `--critic`. |
+| `no-pending` | No round of the ticket is pending for that critic. Nothing changed. |
+| `pending-corrupt` | The stored text is missing or no longer matches its sha256. Do not post it. |
+| `confirm-mismatch` | The text, subject or round is not the pending one. Nothing changed. |
+| `critic-busy` | A critic call for this ticket and critic is running. Confirm again after it. |
+| `state` | The saved critic state cannot be read. |
 
 The critique skill uses both for recovery too. After a lost reply, an interrupted post or an interrupted confirm, it runs `pending`, looks for a comment whose body is exactly the stored text, and confirms with that comment. It posts the text only when no comment has it. The critic never runs again for a pending round.
 

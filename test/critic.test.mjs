@@ -3,7 +3,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
-import { delimiter, join } from 'node:path';
+import { basename, delimiter, join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { sandbox, acmeConfig, fakesSkip } from './helpers.mjs';
 import * as claude from '../lib/providers/claude.mjs';
 import * as codex from '../lib/providers/codex.mjs';
@@ -698,9 +699,9 @@ test('a model cache that cannot be written never stops a posted round from count
 test('the shipped prompts carry every placeholder, have the critic post on the issue and forbid editing files', () => {
   for (const f of ['critic.md', 'critic-same.md']) {
     const text = readFileSync(new URL(`../prompts/${f}`, import.meta.url), 'utf8');
-    for (const p of ['{TICKET}', '{ROUND}', '{SUBJECT}', '{SUBJECT_SHORT}', '{DATE}', '{ROUND_NOTE}', '{REVIEWER}', '{MODEL}', '{WORKFLOW}', '{BODY}', '{ISSUE}', '{INSTRUCTION}']) assert.ok(text.includes(p), `${f} ${p}`);
-    assert.match(text, /Read the issue \{ISSUE\} and every one of its comments/);
-    assert.match(text, /Post the critique as one comment on \{ISSUE\}/);
+    for (const p of ['{TICKET}', '{ROUND}', '{SUBJECT}', '{SUBJECT_SHORT}', '{DATE}', '{ROUND_NOTE}', '{REVIEWER}', '{MODEL}', '{WORKFLOW}', '{BODY}', '{ISSUE}', '{BOARD}', '{INSTRUCTION}']) assert.ok(text.includes(p), `${f} ${p}`);
+    assert.match(text, /Read the issue \{ISSUE\} and every one of its comments with your \{BOARD\} tools/);
+    assert.match(text, /Post the critique as one comment on \{ISSUE\} with your \{BOARD\} tool\. Then reply with exactly the text you posted, with nothing before or after it\. Change nothing else on the board unless the approver's instruction above asks for it\./);
     assert.match(text, /reply with exactly the text you posted/);
     assert.match(text, /Do not create, edit or delete any file/);
     assert.equal(/Do not post the critique anywhere/.test(text), false);
@@ -1440,4 +1441,509 @@ test('claude: a managed policy fragment or a device management profile stops the
   assert.deepEqual(b.reviews(), []);
   // Without either, the critic runs.
   assert.equal(b.call({ lead: 'codex' }).status, 0);
+});
+
+// Jira. The fakes serve Atlassian's official server under the name and URL in FAKE_JIRA_SERVERS,
+// a list of name=url (default atlassian at the v2 URL, and acme-files run as a command). A server
+// at an official URL offers Atlassian's tools. A call reaches the fake server only when the client
+// would run it: in Claude Code when the allow and deny rules permit it, in Codex when the tool is in
+// the server's enabled_tools. Every call that reaches it is written to FAKE_HITS. FAKE_JIRA picks
+// what the critic does, modes joined with +: ok reads the issue and every page of its comments,
+// embedded-only reads only the comments inside getJiraIssue, truncated stops before the last page,
+// final-only reads only the last page, skip-middle leaves out a middle page, other-issue and
+// other-cloud read pages of another issue or cloud id, empty has no comments, by-id names the issue
+// by its numeric id in the pages, comment also calls addOrEditJiraIssueComment, confluence runs
+// getConfluencePage through executeRead and write runs createJiraIssue through executeWrite.
+// FAKE_COMMENTS is how many comments there are (default 5), two to a page.
+const JIRA_BOARD = `
+const OFFICIAL = ['https://mcp.atlassian.com/v2/mcp', 'https://mcp.atlassian.com/v1/mcp'];
+const ATLASSIAN_TOOLS = ['getAccessibleAtlassianResources', 'atlassianUserInfo', 'getJiraIssue', 'createJiraIssue', 'editJiraIssue', 'transitionJiraIssue', 'addOrEditJiraIssueComment', 'searchJiraIssuesUsingJql', 'getConfluenceContent', 'createConfluenceContent', 'updateConfluenceContent', 'searchConfluence', 'discover', 'executeRead', 'executeWrite', 'executeDestructive'];
+const jiraServers = (process.env.FAKE_JIRA_SERVERS ?? 'atlassian=https://mcp.atlassian.com/v2/mcp,acme-files=npx').split(',').filter(Boolean).map((e) => { const i = e.indexOf('='); return { name: e.slice(0, i), url: e.slice(i + 1) }; });
+const official = (s) => OFFICIAL.includes(s.url);
+const hit = (tool, input) => fs.appendFileSync(process.env.FAKE_HITS, JSON.stringify({ tool, inner: input && input.tool, input }) + '\\n');
+const critique = (prompt) => ['Critique of ACM-1 brief v1', ...prompt.split('\\n').filter((l) => /^(Reviewer|Model|Workflow): /.test(l)), 'Verdict: Revise', '', 'Blockers', '- One point. Severity High, likelihood Medium.'].join('\\n');
+const jiraBoard = (prompt, text, call) => {
+  const hows = (process.env.FAKE_JIRA || 'ok').split('+');
+  const has = (h) => hows.includes(h);
+  const key = (prompt.match(/Read the issue (\\S+) and every/) || [])[1] || 'ACM-1';
+  const cloud = (prompt.match(/Pass (\\S+) as the cloudId/) || [])[1] || 'cloud-acme';
+  const total = Number(process.env.FAKE_COMMENTS ?? 5);
+  const all = Array.from({ length: total }, (_, i) => ({ id: String(100 + i), body: 'Comment ' + i }));
+  const issue = JSON.stringify({ id: '10042', key, fields: { summary: 'Acme portal', description: 'Acme ships a portal.', comment: { comments: all.slice(0, 2), startAt: 0, maxResults: 2, total } } });
+  call('getJiraIssue', { cloudId: cloud, issueIdOrKey: key, responseContentFormat: 'markdown' }, issue);
+  let starts = [];
+  for (let at = 0; at < total || (at === 0 && total === 0); at += 2) { starts.push(at); if (total === 0) break; }
+  if (has('embedded-only')) starts = [];
+  if (has('truncated')) starts = starts.slice(0, -1);
+  if (has('final-only')) starts = starts.slice(-1);
+  if (has('skip-middle')) starts = starts.filter((s, i) => i === 0 || i === starts.length - 1);
+  for (const at of starts) {
+    const comments = all.slice(at, at + 2);
+    const page = { startAt: at, maxResults: 2, total, isLast: at + comments.length >= total, comments };
+    const ref = has('other-issue') ? 'ACM-99' : has('by-id') ? '10042' : key;
+    call('executeRead', { tool: 'listJiraIssueComments', arguments: { cloudId: has('other-cloud') ? 'cloud-globex' : cloud, issueIdOrKey: ref, startAt: at, maxResults: 2, responseContentFormat: 'markdown' } }, JSON.stringify(page));
+  }
+  if (has('confluence')) call('executeRead', { tool: 'getConfluencePage', arguments: { cloudId: cloud, pageId: '1' } }, '{"title":"Release notes"}');
+  if (has('write')) call('executeWrite', { tool: 'createJiraIssue', arguments: { cloudId: cloud, projectKey: 'ACM' } }, '{"key":"ACM-2"}');
+  if (has('comment')) call('addOrEditJiraIssueComment', { cloudId: cloud, issueIdOrKey: key, commentBody: text, contentFormat: 'markdown' }, '{"id":"200"}');
+};
+`;
+
+const FAKE_JIRA_CLAUDE = `
+const fs = require('node:fs');
+const path = require('node:path');
+const args = process.argv.slice(2);
+const record = (extra) => fs.appendFileSync(process.env.FAKE_CAPTURE, JSON.stringify({ tool: 'claude', args, cwd: process.cwd(), ...extra }) + '\\n');
+if (args[0] === '--version') { console.log('2.1.312 (Claude Code)'); process.exit(0); }
+if (args[0] === 'auth') { record({}); console.log(JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', apiProvider: 'firstParty', subscriptionType: 'pro' })); process.exit(0); }
+${JIRA_BOARD}
+const toolId = (n) => n.replace(/[^A-Za-z0-9_-]/g, '_');
+if (args[0] === 'mcp' && args[1] === 'list') {
+  record({});
+  console.log('Checking MCP server health...\\n');
+  for (const s of jiraServers) console.log(s.name + ': ' + s.url + (s.url.startsWith('http') ? ' (HTTP)' : '') + ' - ✓ Connected');
+  process.exit(0);
+}
+const at = (f) => { const i = args.indexOf(f); return i >= 0 ? args[i + 1] : undefined; };
+const session = at('--resume') ?? at('--session-id');
+const emit = (e) => process.stdout.write(JSON.stringify(e) + '\\n');
+const deny = (at('--disallowedTools') ?? '').split(',').filter(Boolean);
+const allow = (at('--allowedTools') ?? '').split(',').filter(Boolean);
+const match = (rule, tool) => rule.endsWith('*') ? tool.startsWith(rule.slice(0, -1)) : rule === tool || tool.startsWith(rule + '__');
+const denied = (tool) => deny.some((r) => match(r, tool));
+const permitted = (tool) => !denied(tool) && allow.some((r) => match(r, tool));
+const mcpTools = jiraServers.flatMap((s) => (official(s) ? ATLASSIAN_TOOLS : ['read_file']).map((t) => 'mcp__' + toolId(s.name) + '__' + t)).filter((t) => !denied(t));
+const tools = [...(at('--tools') ?? '').split(',').filter(Boolean), ...mcpTools];
+emit({ type: 'system', subtype: 'init', session_id: session, tools, mcp_servers: jiraServers.map((s) => ({ name: s.name, status: 'connected' })) });
+const board = toolId((jiraServers.find((s) => official(s) && !denied('mcp__' + toolId(s.name) + '__getJiraIssue')) ?? { name: 'none' }).name);
+let callNo = 0;
+const call = (tool, input, result) => {
+  const id = 'toolu_' + ++callNo;
+  const name = 'mcp__' + board + '__' + tool;
+  emit({ type: 'assistant', session_id: session, message: { content: [{ type: 'tool_use', id, name, input }] } });
+  const ok = permitted(name);
+  if (ok) hit(tool, input);
+  emit({ type: 'user', session_id: session, message: { content: [{ type: 'tool_result', tool_use_id: id, is_error: !ok, content: ok ? [{ type: 'text', text: result }] : 'Permission denied' }] } });
+};
+const dir = path.join(process.env.CLAUDE_CONFIG_DIR, 'projects', 'acme-neutral');
+fs.mkdirSync(dir, { recursive: true });
+fs.appendFileSync(path.join(dir, session + '.jsonl'), '{}\\n');
+const rl = require('node:readline').createInterface({ input: process.stdin });
+rl.on('line', (line) => {
+  const prompt = JSON.parse(line).message.content;
+  record({ prompt });
+  const text = process.env.FAKE_TEXT ?? critique(prompt);
+  jiraBoard(prompt, text, call);
+  emit({ type: 'result', subtype: 'success', is_error: false, result: text, session_id: session, modelUsage: { 'claude-acme-default-20261101': {} }, usage: { input_tokens: 12, output_tokens: 34 } });
+});
+`;
+
+const FAKE_JIRA_CODEX = `
+const fs = require('node:fs');
+const path = require('node:path');
+const args = process.argv.slice(2);
+const record = (extra) => fs.appendFileSync(process.env.FAKE_CAPTURE, JSON.stringify({ tool: 'codex', args, cwd: process.cwd(), ...extra }) + '\\n');
+if (args[0] === '--version') { console.log('codex-cli 0.166.0-alpha.5.1'); process.exit(0); }
+if (args[0] === 'login' && args[1] === 'status') { record({}); process.stderr.write('Logged in using ChatGPT\\n'); process.exit(0); }
+${JIRA_BOARD}
+const flag = (n, key) => { const a = args.find((x) => x.startsWith('mcp_servers.' + n + '.' + key + '=')); return a === undefined ? undefined : a.slice(a.indexOf('=') + 1); };
+const enabled = (n) => flag(n, 'enabled') !== 'false';
+const enabledTools = (n) => { const v = flag(n, 'enabled_tools'); return v === undefined ? null : JSON.parse(v); };
+const shape = (s) => ({ name: s.name, enabled: enabled(s.name), auth_status: official(s) ? 'o_auth' : 'unsupported', enabled_tools: enabledTools(s.name), transport: s.url.startsWith('http') ? { type: 'streamable_http', url: s.url } : { type: 'stdio', command: s.url } });
+if (args[0] === 'mcp' && args[1] === 'list') { record({}); console.log(JSON.stringify(jiraServers.map(shape))); process.exit(0); }
+if (args[0] === 'mcp' && args[1] === 'get') { record({}); const s = jiraServers.find((x) => x.name === args[2]); if (!s) process.exit(1); console.log(JSON.stringify(shape(s))); process.exit(0); }
+if (args[0] !== 'exec') process.exit(2);
+let input = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (d) => (input += d));
+process.stdin.on('end', () => {
+  record({ prompt: input });
+  const emit = (e) => process.stdout.write(JSON.stringify(e) + '\\n');
+  const resumed = args.includes('resume');
+  const id = resumed ? args[args.length - 2] : require('node:crypto').randomUUID();
+  emit({ type: 'thread.started', thread_id: id });
+  emit({ type: 'turn.started' });
+  const text = process.env.FAKE_TEXT ?? critique(input);
+  const server = jiraServers.find((s) => official(s) && enabled(s.name));
+  let callNo = 0;
+  const call = (tool, input, result) => {
+    const item = { id: 'item_m' + ++callNo, type: 'mcp_tool_call', server: server.name, tool, arguments: input, status: 'in_progress' };
+    emit({ type: 'item.started', item });
+    const offered = enabledTools(server.name);
+    if (offered && !offered.includes(tool)) return emit({ type: 'item.completed', item: { ...item, status: 'failed', error: { message: 'tool ' + tool + ' is not enabled' } } });
+    hit(tool, input);
+    emit({ type: 'item.completed', item: { ...item, status: 'completed', result: { content: [{ type: 'text', text: result }] } } });
+  };
+  if (server) jiraBoard(input, text, call);
+  emit({ type: 'item.completed', item: { id: 'item_0', type: 'agent_message', text } });
+  emit({ type: 'turn.completed', usage: { input_tokens: 12, cached_input_tokens: 0, output_tokens: 34 } });
+});
+`;
+
+const JIRA_STATUSES = { draft: 'Draft', ready: 'Ready', inProgress: 'In Progress', acceptance: 'Acceptance', done: 'Done' };
+
+// A sandbox with the Jira fakes and a Linear config with one Jira project, acme-portal, whose
+// board names the site and, with teamId, the cloud id. The prompt is the shipped critic.md with the
+// lead's placeholders filled.
+function jiraBox({ teamId = 'cloud-acme', prompt = 'critic.md' } = {}) {
+  const s = sandbox();
+  const tools = join(s.root, 'tools');
+  mkdirSync(tools);
+  symlinkSync(process.execPath, join(tools, 'node'));
+  s.fake('claude', FAKE_JIRA_CLAUDE);
+  s.fake('codex', FAKE_JIRA_CODEX);
+  const capture = join(s.root, 'capture.jsonl');
+  const hits = join(s.root, 'hits.jsonl');
+  const base = acmeConfig(join(s.root, 'src'), join(s.root, 'tickets'));
+  const portal = { ...base.projects['acme-shop'], tickets: join(s.root, 'portal-tickets'), board: { kind: 'jira', team: 'acme.atlassian.net', project: 'ACM', statuses: JIRA_STATUSES, ...(teamId ? { teamId } : {}) } };
+  s.config({ ...base, projects: { ...base.projects, 'acme-portal': portal } });
+  const template = readFileSync(new URL(`../prompts/${prompt}`, import.meta.url), 'utf8');
+  const filled = template.replace(/\{(TICKET|ROUND|SUBJECT|SUBJECT_SHORT|DATE|ROUND_NOTE|BODY)\}/g, (_, k) => ({ TICKET: 'ACM-1', ROUND: '1', SUBJECT: 'the brief', SUBJECT_SHORT: 'ACM-1 brief v1', DATE: '2026-11-10', ROUND_NOTE: '', BODY: 'Acme ships a portal.' })[k]);
+  const promptFile = join(s.root, 'prompt.md');
+  writeFileSync(promptFile, filled);
+  const env = { PATH: [s.fakes, tools].join(delimiter), BOLLPLANK_APPS_DIR: join(s.root, 'apps'), FAKE_CAPTURE: capture, FAKE_HITS: hits };
+  const call = (opts = {}, extraEnv = {}) => {
+    const { subject = 'brief', round = 1, lead = 'claude', critic, project = 'acme-portal', ticket = 'ACM-1' } = opts;
+    const args = ['critic', '--ticket', ticket, '--subject', subject, '--round', String(round), '--prompt-file', promptFile, '--lead', lead];
+    if (project) args.push('--project', project);
+    if (critic) args.push('--critic', critic);
+    return s.run(args, { ...env, ...extraEnv });
+  };
+  const cmd = (args, extraEnv = {}) => s.run(['critic', ...args], { ...env, ...extraEnv });
+  const lines = (f) => (existsSync(f) ? readFileSync(f, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
+  const reviews = () => lines(capture).filter((c) => c.prompt !== undefined);
+  const state = (name) => {
+    const f = join(s.bollplank, 'critics', name);
+    return existsSync(f) ? JSON.parse(readFileSync(f, 'utf8')) : null;
+  };
+  const critics = () => (existsSync(join(s.bollplank, 'critics')) ? readdirSync(join(s.bollplank, 'critics')).sort() : []);
+  return { s, call, cmd, reviews, hits: () => lines(hits), captures: () => lines(capture), state, critics, promptFile };
+}
+
+const jiraCritics = [['claude', 'codex'], ['codex', 'claude']];
+
+for (const [critic, lead] of jiraCritics) {
+  test(`${critic}: a full Jira round reads the issue and every page, posts nothing and returns a pending reply`, { skip: fakesSkip }, (t) => {
+    const b = jiraBox();
+    after(t, b);
+    const r = b.call({ lead });
+    assert.equal(r.status, 0, r.stdout);
+    assert.equal(r.json.critic, critic);
+    assert.equal(r.json.mode, 'other');
+    assert.equal(r.json.delivery, 'reply');
+    assert.equal(r.json.posted, false);
+    assert.equal(r.json.pending, true);
+    assert.equal(r.json.verdict, 'Revise');
+    assert.match(r.json.text, /^Critique of ACM-1 brief v1\nReviewer: /);
+    assert.equal(r.json.headerCorrection, undefined);
+    // Only reads reached the server: the issue and three pages of comments.
+    assert.deepEqual(b.hits().map((h) => h.inner ?? h.tool), ['getJiraIssue', 'listJiraIssueComments', 'listJiraIssueComments', 'listJiraIssueComments']);
+    // The round is pending, not counted, and its text is in a file named after the state file.
+    const st = b.state(`ACM-1.${critic}.json`);
+    assert.deepEqual(st.rounds, { brief: 0, plan: 0, code: 0 });
+    assert.equal(st.pending.subject, 'brief');
+    assert.equal(st.pending.round, 1);
+    assert.equal(basename(st.pending.file), `ACM-1.${critic}.pending-brief-1.md`);
+    assert.equal(readFileSync(st.pending.file, 'utf8'), r.json.text);
+    assert.equal(st.pending.sha256, createHash('sha256').update(r.json.text).digest('hex'));
+    // The prompt names Jira, tells the critic to reply only and names the cloud id.
+    const p = b.reviews().at(-1).prompt;
+    assert.match(p, /every one of its comments with your Jira tools/);
+    assert.match(p, /Do not post the critique\./);
+    assert.match(p, /Pass cloud-acme as the cloudId in every Jira call\./);
+    assert.equal(p.includes('Post the critique as one comment'), false);
+    assert.equal(/\{(BOARD|ISSUE|REVIEWER|MODEL|WORKFLOW|INSTRUCTION)\}/.test(p), false);
+  });
+
+  test(`${critic}: the Jira critic is offered only getJiraIssue and executeRead, and the comment tool never reaches the server`, { skip: fakesSkip }, (t) => {
+    const b = jiraBox();
+    after(t, b);
+    const r = b.call({ lead }, { FAKE_JIRA: 'ok+comment' });
+    assert.equal(r.status, 1, r.stdout);
+    assert.equal(r.json.failure, 'critic-used-tools');
+    assert.equal(r.json.text, undefined);
+    assert.equal(b.hits().some((h) => h.tool === 'addOrEditJiraIssueComment'), false);
+    assert.equal(b.state(`ACM-1.${critic}.json`)?.pending, undefined);
+    const run = b.reviews().at(-1);
+    if (critic === 'claude') {
+      const allow = argAfter(run.args, '--allowedTools').split(',');
+      assert.deepEqual(allow.filter((a) => a.startsWith('mcp__')), ['mcp__atlassian__getJiraIssue', 'mcp__atlassian__executeRead']);
+      const deny = argAfter(run.args, '--disallowedTools').split(',');
+      for (const tool of ['addOrEditJiraIssueComment', 'executeWrite', 'executeDestructive', 'discover', 'getConfluenceContent', 'searchConfluence', 'createConfluenceContent', 'updateConfluenceContent', 'editJiraIssue', 'transitionJiraIssue', 'createJiraIssue', 'searchJiraIssuesUsingJql', 'getAccessibleAtlassianResources', 'atlassianUserInfo']) assert.ok(deny.includes(`mcp__atlassian__${tool}`), tool);
+      assert.ok(deny.includes('mcp__acme-files'));
+      assert.equal(deny.some((d) => /getJiraIssue$|executeRead$|__get\*$|__execute\*$/.test(d)), false);
+    } else {
+      assert.ok(run.args.includes('mcp_servers.atlassian.enabled_tools=["getJiraIssue","executeRead"]'));
+      assert.equal(run.args.some((a) => a.includes('default_tools_approval_mode')), false);
+      assert.ok(run.args.includes('mcp_servers.acme-files.enabled=false'));
+      assert.ok(run.args.includes('approval_policy="never"'));
+    }
+  });
+
+  for (const mode of ['confluence', 'write']) {
+    test(`${critic}: a Jira critic that runs ${mode === 'write' ? 'executeWrite' : 'a Confluence read through executeRead'} fails as critic-used-tools`, { skip: fakesSkip }, (t) => {
+      const b = jiraBox();
+      after(t, b);
+      const r = b.call({ lead }, { FAKE_JIRA: `ok+${mode}` });
+      assert.equal(r.status, 1, r.stdout);
+      assert.equal(r.json.failure, 'critic-used-tools');
+      assert.match(r.json.detail, mode === 'write' ? /executeWrite/ : /executeRead of getConfluencePage/);
+      assert.equal(r.json.text, undefined);
+      assert.equal(b.hits().some((h) => h.tool === 'executeWrite'), false);
+      assert.equal(b.state(`ACM-1.${critic}.json`)?.pending, undefined);
+    });
+  }
+
+  for (const mode of ['embedded-only', 'truncated', 'final-only', 'skip-middle', 'other-issue', 'other-cloud']) {
+    test(`${critic}: a Jira round whose comments read is ${mode} fails as board-unreachable`, { skip: fakesSkip }, (t) => {
+      const b = jiraBox();
+      after(t, b);
+      const r = b.call({ lead }, { FAKE_JIRA: mode });
+      assert.equal(r.status, 1, r.stdout);
+      assert.equal(r.json.failure, 'board-unreachable');
+      assert.equal(r.json.posted, false);
+      const st = b.state(`ACM-1.${critic}.json`);
+      assert.deepEqual(st.rounds, { brief: 0, plan: 0, code: 0 });
+      assert.equal(st.pending, undefined);
+      assert.deepEqual(b.critics().filter((f) => f.includes('pending')), []);
+    });
+  }
+}
+
+test('a Jira round with no comments and isLast passes, and pages by the numeric id or without a cloud id in the config pass', { skip: fakesSkip }, (t) => {
+  const b = jiraBox({ teamId: null });
+  after(t, b);
+  let r = b.call({ lead: 'claude' }, { FAKE_JIRA: 'empty', FAKE_COMMENTS: '0' });
+  assert.equal(r.status, 0, r.stdout);
+  assert.equal(r.json.pending, true);
+  // Without a cloud id in the config, the prompt names the site and one cloud id must be used throughout.
+  assert.match(b.reviews().at(-1).prompt, /Pass acme\.atlassian\.net as the cloudId in every Jira call\./);
+  r = b.call({ lead: 'claude', ticket: 'ACM-2' }, { FAKE_JIRA: 'by-id' });
+  assert.equal(r.status, 0, r.stdout);
+  r = b.call({ lead: 'claude', ticket: 'ACM-3' }, { FAKE_JIRA: 'other-cloud' });
+  assert.equal(r.json.failure, 'board-unreachable');
+});
+
+test('a server named atlassian at another URL is not the Jira board, in either client', { skip: fakesSkip }, (t) => {
+  const b = jiraBox();
+  after(t, b);
+  const impostor = { FAKE_JIRA_SERVERS: 'atlassian=https://mcp.acme.example/mcp,acme-files=npx' };
+  for (const lead of ['claude', 'codex']) {
+    const r = b.call({ lead }, impostor);
+    assert.equal(r.json.failure, 'critic-unavailable', r.stdout);
+    assert.match(r.json.detail, /https:\/\/mcp\.atlassian\.com\/v2\/mcp/);
+    assert.match(r.json.fix, /mcp add .*atlassian.*https:\/\/mcp\.atlassian\.com\/v2\/mcp/);
+  }
+  assert.deepEqual(b.reviews(), []);
+  assert.deepEqual(b.hits(), []);
+  // With the official server under another name, that one is kept and the impostor is denied or off.
+  const both = { FAKE_JIRA_SERVERS: 'atlassian=https://mcp.acme.example/mcp,acme-rovo=https://mcp.atlassian.com/v1/mcp' };
+  let r = b.call({ lead: 'codex' }, both);
+  assert.equal(r.status, 0, r.stdout);
+  const run = b.reviews().at(-1);
+  assert.deepEqual(argAfter(run.args, '--allowedTools').split(',').filter((a) => a.startsWith('mcp__')), ['mcp__acme-rovo__getJiraIssue', 'mcp__acme-rovo__executeRead']);
+  assert.ok(argAfter(run.args, '--disallowedTools').split(',').includes('mcp__atlassian'));
+  r = b.call({ lead: 'claude', ticket: 'ACM-2' }, both);
+  assert.equal(r.status, 0, r.stdout);
+  const x = b.reviews().at(-1);
+  assert.ok(x.args.includes('mcp_servers.atlassian.enabled=false'));
+  assert.ok(x.args.includes('mcp_servers.acme-rovo.enabled_tools=["getJiraIssue","executeRead"]'));
+});
+
+test('the Jira evidence needs the whole comment list without gaps, on one cloud id', async () => {
+  const { boardWork, coversAll } = await import('../lib/commands/critic.mjs');
+  const page = (startAt, count, total, isLast = startAt + count >= total) => ({ startAt, count, total, isLast });
+  assert.equal(coversAll([page(0, 2, 5), page(2, 2, 5), page(4, 1, 5)]), true);
+  assert.equal(coversAll([page(4, 1, 5), page(0, 2, 5), page(2, 2, 5)]), true);
+  assert.equal(coversAll([page(0, 0, 0, true)]), true);
+  assert.equal(coversAll([page(0, 2, 5), page(2, 2, 5)]), false);
+  assert.equal(coversAll([page(4, 1, 5)]), false);
+  assert.equal(coversAll([page(0, 2, 5), page(4, 1, 5)]), false);
+  assert.equal(coversAll([page(0, 0, 5, false)]), false);
+  assert.equal(coversAll([{ startAt: 0, count: 2, total: null, isLast: false }, { startAt: 2, count: 1, total: null, isLast: true }]), true);
+  const issue = { server: 'atlassian', tool: 'getJiraIssue', args: { cloudId: 'cloud-acme', issueIdOrKey: 'ACM-1' }, ok: true, text: JSON.stringify({ id: '10042', key: 'ACM-1', fields: { comment: { comments: [], startAt: 0, total: 0 } } }) };
+  const comments = (args, result) => ({ server: 'atlassian', tool: 'executeRead', args: { tool: 'listJiraIssueComments', arguments: { cloudId: 'cloud-acme', ...args } }, ok: true, text: JSON.stringify({ content: [{ type: 'text', text: JSON.stringify(result) }] }) });
+  const empty = comments({ issueIdOrKey: 'ACM-1' }, { startAt: 0, total: 0, isLast: true, comments: [] });
+  assert.deepEqual(boardWork([issue, empty], 'ACM-1', 'jira', { cloudId: 'cloud-acme' }), { issue: true, comments: true, posted: false, critique: null });
+  // Embedded comments alone never count, even when they hold every comment.
+  assert.deepEqual(boardWork([issue], 'ACM-1', 'jira', { cloudId: 'cloud-acme' }).comments, false);
+  // The numeric id from the issue read is an alias, and the issue read by its result alone counts.
+  assert.equal(boardWork([issue, comments({ issueIdOrKey: '10042' }, { startAt: 0, total: 0, isLast: true, comments: [] })], 'ACM-1', 'jira').comments, true);
+  assert.equal(boardWork([{ ...issue, args: { cloudId: 'cloud-acme', issueIdOrKey: '10042' } }, empty], 'ACM-1', 'jira').issue, true);
+  // Another issue, another cloud id, or two cloud ids with none configured never count.
+  assert.equal(boardWork([{ ...issue, args: { cloudId: 'cloud-acme', issueIdOrKey: 'ACM-2' } }, empty], 'ACM-1', 'jira').issue, false);
+  assert.equal(boardWork([issue, empty], 'ACM-1', 'jira', { cloudId: 'cloud-globex' }).issue, false);
+  assert.equal(boardWork([{ ...issue, args: { cloudId: 'cloud-globex', issueIdOrKey: 'ACM-1' } }, empty], 'ACM-1', 'jira').issue, false);
+  // A comment call is never looked for as a post on Jira.
+  assert.equal(boardWork([issue, empty, { server: 'atlassian', tool: 'addOrEditJiraIssueComment', args: { issueIdOrKey: 'ACM-1', commentBody: 'Critique of ACM-1\nVerdict: Approve' }, ok: true, text: '{}' }], 'ACM-1', 'jira').posted, false);
+});
+
+test('the Jira event checks allow executeRead only for listJiraIssueComments', () => {
+  const only = { tools: ['getJiraIssue', 'executeRead'], inner: { executeRead: ['listJiraIssueComments'] } };
+  const item = (tool, args) => ({ type: 'mcp_tool_call', server: 'atlassian', tool, arguments: args });
+  assert.equal(codex.allowedItem(item('getJiraIssue', {}), ['atlassian'], only), true);
+  assert.equal(codex.allowedItem(item('executeRead', { tool: 'listJiraIssueComments', arguments: {} }), ['atlassian'], only), true);
+  assert.equal(codex.allowedItem(item('executeRead', JSON.stringify({ tool: 'listJiraIssueComments' })), ['atlassian'], only), true);
+  for (const [tool, args] of [['executeRead', { tool: 'getConfluencePage' }], ['executeRead', {}], ['executeWrite', { tool: 'createJiraIssue' }], ['addOrEditJiraIssueComment', {}], ['discover', {}]]) assert.equal(codex.allowedItem(item(tool, args), ['atlassian'], only), false, `${tool} ${JSON.stringify(args)}`);
+  const allowed = { builtIn: ['ToolSearch'], linear: ['atlassian'], tools: only.tools, inner: only.inner, denied: [], readDir: null, cwd: '/acme/neutral', home: '/home/acme' };
+  const use = (name, input) => ({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 't', name, input }] } });
+  assert.equal(claude.toolsUsed(use('mcp__atlassian__getJiraIssue', {}), allowed), null);
+  assert.equal(claude.toolsUsed(use('mcp__atlassian__executeRead', { tool: 'listJiraIssueComments' }), allowed), null);
+  assert.match(String(claude.toolsUsed(use('mcp__atlassian__executeRead', { tool: 'getConfluencePage' }), allowed)), /executeRead of getConfluencePage/);
+  assert.match(String(claude.toolsUsed(use('mcp__atlassian__addOrEditJiraIssueComment', {}), allowed)), /called the tool/);
+  assert.match(String(claude.toolsUsed({ type: 'system', subtype: 'init', tools: ['mcp__atlassian__getJiraIssue', 'mcp__atlassian__searchConfluence'], mcp_servers: [{ name: 'atlassian' }] }, allowed)), /offered the tools mcp__atlassian__searchConfluence/);
+});
+
+test('a pending Jira round blocks a new call, and confirm counts it only with the right text, subject and round', { skip: fakesSkip }, (t) => {
+  const b = jiraBox();
+  after(t, b);
+  const r = b.call({ lead: 'claude' });
+  assert.equal(r.status, 0, r.stdout);
+  const st = () => b.state('ACM-1.codex.json');
+  const before = JSON.stringify(st());
+  // A new call, even for another subject, fails before any client starts.
+  const runs = b.captures().length;
+  for (const [subject, round] of [['brief', 2], ['plan', 1], ['brief', 1]]) {
+    const again = b.call({ lead: 'claude', subject, round });
+    assert.equal(again.status, 1, again.stdout);
+    assert.equal(again.json.failure, 'post-pending');
+    assert.match(again.json.detail, /brief round 1 of ACM-1/);
+    assert.deepEqual(again.json.pending, { subject: 'brief', round: 1 });
+  }
+  assert.equal(b.captures().length, runs);
+  // pending prints the record and the exact text, and starts no client.
+  const p = b.cmd(['pending', '--ticket', 'ACM-1']);
+  assert.equal(p.status, 0, p.stdout);
+  assert.equal(p.json.text, r.json.text);
+  assert.deepEqual([p.json.critic, p.json.pending.subject, p.json.pending.round, p.json.pending.sha256], ['codex', 'brief', 1, st().pending.sha256]);
+  assert.equal(b.captures().length, runs);
+  // Wrong text, subject or round fails and changes nothing.
+  const good = join(b.s.root, 'posted.md');
+  writeFileSync(good, r.json.text);
+  const bad = join(b.s.root, 'edited.md');
+  writeFileSync(bad, `${r.json.text}\n`);
+  const confirm = (file, subject = 'brief', round = 1, extra = []) => b.cmd(['confirm', '--ticket', 'ACM-1', '--subject', subject, '--round', String(round), '--text-file', file, '--comment', 'https://acme.atlassian.net/browse/ACM-1?focusedCommentId=200', ...extra]);
+  for (const [file, subject, round] of [[bad, 'brief', 1], [good, 'plan', 1], [good, 'brief', 2]]) {
+    const c = confirm(file, subject, round);
+    assert.equal(c.status, 1, c.stdout);
+    assert.equal(c.json.failure, 'confirm-mismatch');
+    assert.equal(JSON.stringify(st()), before);
+    assert.ok(existsSync(st().pending.file));
+  }
+  // The right text counts the round, as a posted round is counted, and clears the pending record and its file.
+  const ok = confirm(good, 'brief', 1, ['--lead', 'claude', '--project', 'acme-portal']);
+  assert.equal(ok.status, 0, ok.stdout);
+  assert.deepEqual([ok.json.counted, ok.json.subject, ok.json.round], [true, 'brief', 1]);
+  assert.deepEqual(st().rounds, { brief: 1, plan: 0, code: 0 });
+  assert.equal(st().pending, undefined);
+  assert.equal(st().sessionId, r.json.sessionId);
+  assert.deepEqual(b.critics().filter((f) => f.includes('pending')), []);
+  assert.equal(b.cmd(['pending', '--ticket', 'ACM-1']).json.failure, 'no-pending');
+  assert.equal(confirm(good).json.failure, 'no-pending');
+  // The next call runs the next round in the same session.
+  const next = b.call({ lead: 'claude', round: 2 });
+  assert.equal(next.status, 0, next.stdout);
+  assert.equal(next.json.sessionId, r.json.sessionId);
+  assert.ok(b.reviews().at(-1).args.includes('resume'));
+});
+
+test('a lost Jira reply is recovered from the stored text, posted once and confirmed, with the critic started once', { skip: fakesSkip }, (t) => {
+  const b = jiraBox();
+  after(t, b);
+  // The wrapper saved the pending round, but its output never reached the lead, as when it stops
+  // after saving the record: the lead only knows the call it made.
+  const lost = b.call({ lead: 'codex' });
+  assert.equal(lost.status, 0, lost.stdout);
+  const stored = readFileSync(b.state('ACM-1.claude.json').pending.file, 'utf8');
+  // The lead calls again, gets post-pending, and recovers with critic pending.
+  assert.equal(b.call({ lead: 'codex' }).json.failure, 'post-pending');
+  const p = b.cmd(['pending', '--ticket', 'ACM-1', '--lead', 'codex', '--project', 'acme-portal']);
+  assert.equal(p.status, 0, p.stdout);
+  assert.equal(p.json.text, stored);
+  // No comment has the text, so the lead posts it once, reads it back and confirms.
+  const file = join(b.s.root, 'recovered.md');
+  writeFileSync(file, p.json.text);
+  const c = b.cmd(['confirm', '--ticket', 'ACM-1', '--subject', 'brief', '--round', '1', '--text-file', file, '--comment', 'https://acme.atlassian.net/browse/ACM-1?focusedCommentId=201']);
+  assert.equal(c.status, 0, c.stdout);
+  assert.equal(b.reviews().length, 1);
+  assert.deepEqual(b.state('ACM-1.claude.json').rounds, { brief: 1, plan: 0, code: 0 });
+  // A confirm interrupted after the post: a second confirm finds nothing pending and changes nothing.
+  assert.equal(b.cmd(['confirm', '--ticket', 'ACM-1', '--subject', 'brief', '--round', '1', '--text-file', file, '--comment', 'x']).json.failure, 'no-pending');
+  assert.deepEqual(b.state('ACM-1.claude.json').rounds, { brief: 1, plan: 0, code: 0 });
+});
+
+test('a stored text that no longer matches its sha256 makes critic pending fail', { skip: fakesSkip }, (t) => {
+  const b = jiraBox();
+  after(t, b);
+  assert.equal(b.call({ lead: 'claude' }).status, 0);
+  const file = b.state('ACM-1.codex.json').pending.file;
+  writeFileSync(file, `${readFileSync(file, 'utf8')}\nAn added line.`);
+  const p = b.cmd(['pending', '--ticket', 'ACM-1']);
+  assert.equal(p.status, 1, p.stdout);
+  assert.equal(p.json.failure, 'pending-corrupt');
+  assert.equal(p.json.text, undefined);
+  rmSync(file);
+  assert.equal(b.cmd(['pending', '--ticket', 'ACM-1']).json.failure, 'pending-corrupt');
+});
+
+test('two tickets with the same subject and round pending keep separate texts, and confirming one leaves the other', { skip: fakesSkip }, (t) => {
+  const b = jiraBox();
+  after(t, b);
+  const one = b.call({ lead: 'claude', ticket: 'ACM-1' });
+  const two = b.call({ lead: 'claude', ticket: 'ACM-2' }, { FAKE_TEXT: 'Critique of ACM-2 brief v1\nVerdict: Approve\n\nNo material points.' });
+  assert.equal(one.status, 0, one.stdout);
+  assert.equal(two.status, 0, two.stdout);
+  assert.notEqual(one.json.text, two.json.text);
+  assert.deepEqual(b.critics().filter((f) => f.includes('pending')), ['ACM-1.codex.pending-brief-1.md', 'ACM-2.codex.pending-brief-1.md']);
+  const file = join(b.s.root, 'one.md');
+  writeFileSync(file, one.json.text);
+  assert.equal(b.cmd(['confirm', '--ticket', 'ACM-1', '--subject', 'brief', '--round', '1', '--text-file', file, '--comment', 'c1']).status, 0);
+  const other = b.state('ACM-2.codex.json').pending;
+  assert.equal(readFileSync(other.file, 'utf8'), two.json.text);
+  assert.equal(createHash('sha256').update(readFileSync(other.file, 'utf8')).digest('hex'), other.sha256);
+  assert.equal(b.cmd(['pending', '--ticket', 'ACM-2']).json.text, two.json.text);
+  // The other ticket's text cannot confirm this one.
+  const wrong = join(b.s.root, 'two.md');
+  writeFileSync(wrong, two.json.text);
+  b.call({ lead: 'claude', ticket: 'ACM-1', round: 2 });
+  assert.equal(b.cmd(['confirm', '--ticket', 'ACM-1', '--subject', 'brief', '--round', '2', '--text-file', wrong, '--comment', 'c2']).json.failure, 'confirm-mismatch');
+});
+
+test('two critics of one ticket with a round pending need --lead and --critic to pick one', { skip: fakesSkip }, (t) => {
+  const b = jiraBox();
+  after(t, b);
+  assert.equal(b.call({ lead: 'claude' }).status, 0);
+  assert.equal(b.call({ lead: 'claude', critic: 'same' }).status, 0);
+  const both = b.cmd(['pending', '--ticket', 'ACM-1']);
+  assert.equal(both.json.failure, 'usage');
+  assert.match(both.json.detail, /Add --lead and --critic/);
+  assert.equal(b.cmd(['pending', '--ticket', 'ACM-1', '--lead', 'claude', '--critic', 'same']).json.critic, 'claude');
+  assert.equal(b.cmd(['pending', '--ticket', 'ACM-1', '--lead', 'claude']).json.critic, 'codex');
+  assert.equal(b.cmd(['pending', '--ticket', 'ACM-1', '--critic', 'same']).json.same, true);
+  assert.equal(b.cmd(['pending', '--ticket', 'acme']).json.failure, 'usage');
+  assert.equal(b.cmd(['confirm', '--ticket', 'ACM-1']).json.failure, 'usage');
+});
+
+test('a Linear round keeps its delivery, its prompt wording and its post then fail counting', { skip: fakesSkip }, (t) => {
+  const b = box();
+  after(t, b);
+  const real = readFileSync(new URL('../prompts/critic.md', import.meta.url), 'utf8');
+  const promptFile = join(b.s.root, 'shipped.md');
+  writeFileSync(promptFile, `Issue: {ISSUE}\n${real}`);
+  const r = b.call({ lead: 'claude', promptFile });
+  assert.equal(r.status, 0, r.stdout);
+  assert.equal(r.json.delivery, 'posted');
+  assert.equal(r.json.pending, undefined);
+  assert.equal(r.json.posted, true);
+  const p = b.reviews().at(-1).prompt;
+  assert.match(p, /every one of its comments with your Linear tools, then read the subject/);
+  assert.match(p, /Post the critique as one comment on ACME-1 with your Linear tool\. Then reply with exactly the text you posted/);
+  assert.equal(b.state('ACME-1.codex.json').pending, undefined);
+  assert.deepEqual(b.state('ACME-1.codex.json').rounds, { brief: 1, plan: 0, code: 0 });
+  // Post then fail still counts the round.
+  const f = b.call({ lead: 'claude', round: 2 }, { FAKE_MODE: 'post-then-crash' });
+  assert.equal(f.json.failure, 'exit');
+  assert.equal(f.json.counted, true);
+  assert.deepEqual(b.state('ACME-1.codex.json').rounds, { brief: 2, plan: 0, code: 0 });
+  assert.equal(b.s.run(['critic', 'pending', '--ticket', 'ACME-1']).json.failure, 'no-pending');
 });
