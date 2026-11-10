@@ -599,7 +599,8 @@ test('a Jira answer that is not a site, a project key or a space key stops init 
     [{ team: 'acme.example.com', project: 'ACME' }, /^team: acme\.example\.com is not a Jira site/],
     [{ team: SITE, project: 'acme-dev' }, /^project: acme-dev is not a Jira project key/],
     [{ team: SITE, project: 'Acme Shop' }, /^project: Acme Shop is not a Jira project key/],
-    [{ team: SITE, project: 'ACME', space: 'no space' }, /^space: no space is not a Confluence space key/],
+    // A space is looked up before its form is checked, so this one is reported as not found.
+    [{ team: SITE, project: 'ACME', space: 'no space' }, /^space: no space is neither the key nor the name of a Confluence space/],
   ];
   for (const [answers, message] of cases) {
     const r = b.init(withSource(b, { kind: 'jira', addProject: false, ...answers }));
@@ -730,6 +731,14 @@ test('init saves a space typed by its name as its key, asks again for an unknown
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.equal(b.config().board.space, 'DOCS');
   assert.match(text(r), /acmedocs is the name of the space DOCS on acme\.atlassian\.net, so its key DOCS is saved\./);
+  // A name that is not a key's form is looked up too.
+  const named = b.init(withSource(b, { kind: 'jira', team: SITE, project: 'ACME', space: 'Acme space', addProject: false, writeConfig: true }));
+  assert.equal(named.status, 0, named.stdout + named.stderr);
+  assert.equal(b.config().board.space, 'ACME');
+  assert.match(text(named), /Acme space is the name of the space ACME on acme\.atlassian\.net, so its key ACME is saved\./);
+  // Offline, a name is not a key, so it is refused.
+  const offline = b.init(withSource(b, { kind: 'jira', team: SITE, project: 'ACME', space: 'Acme space', addProject: false, writeConfig: true }), ['--json', '--offline']);
+  assert.match(offline.json.detail, /^space: Acme space is not a Confluence space key/);
   // A space neither listed by key nor by name stops an answers file at that key.
   const gone = b.init(withSource(b, { kind: 'jira', team: SITE, project: 'ACME', space: 'NOPE', addProject: false, writeConfig: true }));
   assert.equal(gone.json.failure, 'usage');
