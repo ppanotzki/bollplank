@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { sandbox, fakesSkip } from './helpers.mjs';
+import { asker } from '../lib/setup/prompts.mjs';
 import * as claude from '../lib/providers/claude.mjs';
 import * as codex from '../lib/providers/codex.mjs';
 import { CONFLICTING_INNER, innerCall, isJiraRead, isOfficialUrl, JIRA_PROBE_TOOLS, judgeJira, jiraAddStatusSteps } from '../lib/setup/probe.mjs';
@@ -613,12 +614,18 @@ test('a config that still does not validate keeps the answers, and a second run 
   const kept = join(b.s.bollplank, 'config.answers.json');
   assert.match(r.json.detail, /projects\.acme-shop\.board: a linear board in a config whose board is jira must set its own team/);
   assert.ok(r.json.detail.includes(`Your answers are in ${kept}.`));
-  assert.ok(r.json.detail.includes(`bollplank init --answers ${kept}`));
+  assert.ok(r.json.detail.includes(`bollplank init --answers "${kept}"`));
   assert.equal(readFileSync(join(b.s.bollplank, 'config.json'), 'utf8'), old);
   const answers = JSON.parse(readFileSync(kept, 'utf8'));
   assert.equal(answers.kind, 'jira');
   assert.equal(answers.project, 'ACME');
   assert.equal(answers.approver, 'Ada');
+  // A rerun that fails again keeps the keys it was given, and a project's name is kept as its key.
+  const named = b.init({ approver: 'Ada', kind: 'jira', team: SITE, project: 'acme mobile', space: 'ACME', addProject: false, extra: 'kept' });
+  assert.equal(named.json.failure, 'config');
+  const second = JSON.parse(readFileSync(kept, 'utf8'));
+  assert.equal(second.project, 'ACM');
+  assert.equal(second.extra, 'kept');
   // Once the two projects that inherited the team name it, the kept answers save as they are.
   c.projects['acme-shop'].board.team = 'ACME';
   c.projects['acme-docs'].board = { team: 'ACME' };
@@ -627,4 +634,14 @@ test('a config that still does not validate keeps the answers, and a second run 
   assert.equal(again.status, 0, again.stdout + again.stderr);
   assert.equal(b.config().board.kind, 'jira');
   assert.equal(b.config().projects['acme-shop'].board.team, 'ACME');
+});
+
+test('the kept answers hold a key named __proto__ as an answer, and never touch Object.prototype', async () => {
+  const io = asker({ answers: JSON.parse('{"team":"ACME"}') });
+  assert.equal(await io.pick(['missingProject', '__proto__', 'polluted'], 'Q', ['other', 'linear'], 'other'), 'other');
+  assert.equal(await io.text(['projects', 'constructor', 'team'], 'Q', 'ACME'), 'ACME');
+  assert.equal({}.polluted, undefined);
+  const kept = io.answered();
+  assert.equal(Object.hasOwn(kept.missingProject, '__proto__'), true);
+  assert.deepEqual(JSON.parse(JSON.stringify(kept)), JSON.parse('{"team":"ACME","missingProject":{"__proto__":{"polluted":"other"}},"projects":{"constructor":{"team":"ACME"}}}'));
 });
