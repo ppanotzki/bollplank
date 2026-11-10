@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.0 (2026-11-10)
+
+- Jira Cloud is a second board kind beside Linear. Set `board.kind` to `"jira"`, with `team` as the Jira site, such as `acme.atlassian.net`, and `project` as the Jira project key. Bollplank reaches Jira only through Atlassian's official MCP server, matched by its URL, signed in with your own account in Claude Code and Codex.
+- The board kind can be set per project, so one config can hold Linear and Jira projects. A project of the top level kind inherits team, project and statuses as before. A project of another kind inherits none of them and must set its own team, project and all five statuses.
+- A Jira project can name a Confluence `space`. The accept skill then keeps release notes in a page titled "Release notes" in that space, and checks on readback that the older notes are unchanged. Without a space, release notes stay in the ticket's release note comment and the CHANGELOG.
+- `bollplank init` asks for the board kind first and probes only that kind. A project of another kind is probed when it is added. An answers file without `kind` runs exactly as before.
+- `bollplank doctor` checks every board kind the config uses, and for Jira the site, project key, cloud id, project id, statuses and space.
+- On Jira the critic is reply only. It gets `getJiraIssue` and `executeRead` of `listJiraIssueComments` and nothing else, and must read every page of comments. The lead posts its reply and runs `bollplank critic confirm`. `bollplank critic pending` gives back a reply whose post was interrupted, and a new call waits with `post-pending` until it is confirmed. Linear critiques work as before, and their results now say `delivery: "posted"`.
+- `bollplank board safe-write jira --adf <file>` checks a Jira description before it is replaced, and refuses when it holds content that markdown would drop, such as media, mentions or tables.
+- Consulting and configuration runs on Jira check the readback against the cloud id and the numeric project id.
+
 ## 0.6.0 (2026-11-07)
 
 - `bollplank-accept` knows where to read AGENTS.md for a consulting or configuration project: `<source>/AGENTS.md`, from the remote's default branch when the source folder is a Git work tree, and from disk when it is a plain folder. Before, it only read AGENTS.md from a repo's base branch, so a project with no repo had no rule. It reads the file fresh, stops before any board write when the file is missing or empty, and names its path, sha256 and last modified time in the accepted comment.
