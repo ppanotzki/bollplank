@@ -739,3 +739,20 @@ test('init saves a space typed by its name as its key, asks again for an unknown
   assert.equal(next.status, 0, next.stdout + next.stderr);
   assert.equal(b.config().board.space, 'DOCS');
 });
+
+test('an executeRead whose top level and inner cloudId differ names no allowed tool, and doctor counts a listed key', () => {
+  assert.equal(innerCall({ name: 'listJiraIssueComments', cloudId: 'cloud-b', inputs: { cloudId: 'cloud-a', issueIdOrKey: 'ACME-1' } }).tool, CONFLICTING_INNER);
+  assert.deepEqual(innerCall({ name: 'listJiraProjects', cloudId: 'cloud-a', inputs: { cloudId: 'cloud-a' } }), { tool: 'listJiraProjects', args: { cloudId: 'cloud-a' } });
+  assert.equal(isJiraRead({ name: 'mcp__atlassian__executeRead', args: { name: 'listJiraProjects', cloudId: 'cloud-b', inputs: { cloudId: 'cloud-a' } } }, { servers: ['atlassian'] }), false);
+});
+
+test('doctor passes a space whose key only the list returned', { skip: fakesSkip }, (t) => {
+  const b = box(t);
+  assert.equal(b.init(withSource(b, { kind: 'jira', team: SITE, project: 'ACME', addProject: false })).status, 0);
+  const c = b.config();
+  c.board.space = 'DOCS';
+  writeFileSync(join(b.s.bollplank, 'config.json'), JSON.stringify(c, null, 2));
+  // DOCS cannot be read by key in the fakes, but the list returns it.
+  const d = byId(b.s.run(['doctor', '--json'], b.env));
+  assert.equal(d[`board.jira.space.${SITE}.DOCS`]?.ok, true, JSON.stringify(d[`board.jira.space.${SITE}.DOCS`]));
+});
