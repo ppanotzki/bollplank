@@ -2049,3 +2049,17 @@ test('the critique skill stops on a near match of a pending Jira round and confi
   assert.match(text, /If there is one, stop\. Do not post and do not confirm\. Tell the approver/);
   assert.match(text, /Only an exact match ever confirms a round\./);
 });
+
+test('the Jira issue aliases are learned only from reads on the target cloud id', async () => {
+  const { boardWork } = await import('../lib/commands/critic.mjs');
+  const issue = (cloudId, id) => ({ server: 'atlassian', tool: 'getJiraIssue', args: { cloudId, issueIdOrKey: 'ACME-1' }, ok: true, text: JSON.stringify({ id, key: 'ACME-1' }) });
+  const page = (cloudId, ref) => ({ server: 'atlassian', tool: 'executeRead', args: { tool: 'listJiraIssueComments', arguments: { cloudId, issueIdOrKey: ref } }, ok: true, text: JSON.stringify({ startAt: 0, total: 0, isLast: true, comments: [] }) });
+  // The id 10042 belongs to ACME-1 on another site, so its comments on the configured cloud are another issue's.
+  const calls = [issue('cloud-globex', '10042'), issue('cloud-acme', '10099'), page('cloud-acme', '10042')];
+  assert.deepEqual(boardWork(calls, 'ACME-1', 'jira', { cloudId: 'cloud-acme' }), { issue: true, comments: false, posted: false, critique: null });
+  assert.equal(boardWork([...calls, page('cloud-acme', '10099')], 'ACME-1', 'jira', { cloudId: 'cloud-acme' }).comments, true);
+  // With no cloud id configured, reads on two sites never count.
+  const site = (c, id) => issue(c, id);
+  assert.equal(boardWork([site('acme.atlassian.net', '10099'), page('acme.atlassian.net', '10099'), site('globex.atlassian.net', '10042')], 'ACME-1', 'jira', { site: 'acme.atlassian.net' }).issue, false);
+  assert.equal(boardWork([site('acme.atlassian.net', '10099'), page('acme.atlassian.net', '10099')], 'ACME-1', 'jira', { site: 'acme.atlassian.net' }).comments, true);
+});

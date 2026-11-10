@@ -195,3 +195,44 @@ test('doctor checks a Jira project on another site without the top level cloud i
   assert.equal(Object.keys(checks).some((id) => id.startsWith('board.jira.space.beta')), false);
   assert.equal(checks['board.jira.space.acme.atlassian.net.ACME'].ok, true);
 });
+
+test('a project on the top level site but another project takes the teamId, never the projectId', async (t) => {
+  const { boardIds } = await import('../lib/boards.mjs');
+  const c = twoSites();
+  c.projects['acme-acm'] = { source: '/s', tickets: '/t', repos, board: { project: 'ACM' } };
+  assert.deepEqual(boardIds(c, 'acme-acm'), { teamId: 'cloud-acme' });
+  assert.deepEqual(boardIds(c, 'acme-shop'), { teamId: 'cloud-acme', projectId: '10001' });
+  assert.deepEqual(boardIds(c, 'acme-beta'), {});
+  const s = sandbox();
+  t.after(s.clean);
+  s.config(c);
+  const acm = s.run(['context', 'acme-acm']).json;
+  assert.equal(acm.board.project, 'ACM');
+  assert.equal(acm.board.teamId, 'cloud-acme');
+  assert.equal(acm.board.projectId, undefined);
+  // Doctor names the project's own key for its missing project id.
+  const { jiraBoardChecks } = await import('../lib/commands/doctor.mjs');
+  const reads = [{ client: { label: 'Claude Code' }, sites: [{ site: 'acme.atlassian.net', cloudId: 'cloud-acme', projects: [{ key: 'ACME', id: '10001', statuses: Object.values(jiraStatuses) }, { key: 'ACM', id: '10002', statuses: Object.values(jiraStatuses) }], spaces: ['ACME'] }, { site: 'beta.atlassian.net', cloudId: 'cloud-beta', projects: [], spaces: [] }] }];
+  const checks = Object.fromEntries(jiraBoardChecks(withDefaults(c, '/'), reads, c).map((x) => [x.id, x]));
+  const acmId = Object.values(checks).find((x) => x.id.startsWith('board.jira.projectId.acme.atlassian.net.ACM') && !x.id.includes('ACME'));
+  assert.equal(acmId.ok, false);
+  assert.match(acmId.detail, /projects\.acme-acm\.board\.projectId is not set/);
+});
+
+test('a Jira project with its own ids in a Linear config keeps them in context', (t) => {
+  const s = sandbox();
+  t.after(s.clean);
+  const c = mixed();
+  Object.assign(c.projects['acme-portal'].board, { teamId: 'cloud-acme', projectId: '10001' });
+  c.board.teamId = 'linear-team';
+  c.board.projectId = 'linear-project';
+  s.config(c);
+  const portal = s.run(['context', 'acme-portal']).json;
+  assert.equal(portal.board.kind, 'jira');
+  assert.equal(portal.board.teamId, 'cloud-acme');
+  assert.equal(portal.board.projectId, '10001');
+  // The Linear project takes the top level ids, as before.
+  const shop = s.run(['context', 'acme-shop']).json;
+  assert.equal(shop.board.teamId, 'linear-team');
+  assert.equal(shop.board.projectId, 'linear-project');
+});

@@ -495,3 +495,42 @@ test('an inner call whose fields name different tools is refused by the probe ju
   assert.equal(r.ok, false);
   assert.match(r.detail, /executeRead of conflicting inner tool names/);
 });
+
+test('addBoardMcp never signs in to a server whose own URL is not official, wherever else an official URL shows', { skip: fakesSkip }, (t) => {
+  const s = sandbox();
+  t.after(s.clean);
+  const log = join(s.root, 'mcp.jsonl');
+  const fake = (out) => `const fs = require('node:fs');
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(args) + '\\n');
+if (args[0] === 'mcp' && args[1] === 'get') { console.log(process.env.FAKE_GET); process.exit(0); }
+process.exit(0);`;
+  const claudeBin = s.fake('claude', fake());
+  const codexBin = s.fake('codex', fake());
+  const logins = () => (existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []).filter((a) => a[1] === 'login');
+  const official = 'https://mcp.atlassian.com/v2/mcp';
+  const claudeOutputs = [
+    `atlassian:\n  Type: http\n  URL: https://acme.example/mcp?next=${official}`,
+    `atlassian:\n  Type: http\n  URL: https://acme.example/mcp\n  Headers: X-Next: ${official}`,
+    `atlassian:\n  Type: http\n  Note: ${official}`,
+    `atlassian:\n  URL: ${official}\n  URL: https://acme.example/mcp`,
+  ];
+  for (const out of claudeOutputs) {
+    const r = claude.addBoardMcp('jira', { bin: claudeBin, env: { ...s.env, FAKE_GET: out }, stdio: 'ignore' });
+    assert.equal(r.ok, false, out);
+    assert.match(r.detail, /does not point at/);
+  }
+  const codexOutputs = [
+    { name: 'atlassian', transport: { type: 'streamable_http', url: `https://acme.example/mcp?next=${official}` } },
+    { name: 'atlassian', transport: { type: 'streamable_http', url: 'https://acme.example/mcp' }, note: official, url: official },
+  ];
+  for (const out of codexOutputs) {
+    const r = codex.addBoardMcp('jira', { bin: codexBin, env: { ...s.env, FAKE_GET: JSON.stringify(out) }, stdio: 'ignore' });
+    assert.equal(r.ok, false, JSON.stringify(out));
+  }
+  assert.deepEqual(logins(), []);
+  // The server's own official URL is signed in to.
+  assert.equal(claude.addBoardMcp('jira', { bin: claudeBin, env: { ...s.env, FAKE_GET: `atlassian:\n  Scope: User config\n  Type: http\n  URL: ${official}` }, stdio: 'ignore' }).ok, true);
+  assert.equal(codex.addBoardMcp('jira', { bin: codexBin, env: { ...s.env, FAKE_GET: JSON.stringify({ name: 'atlassian', transport: { type: 'streamable_http', url: official } }) }, stdio: 'ignore' }).ok, true);
+  assert.equal(logins().length, 2);
+});
