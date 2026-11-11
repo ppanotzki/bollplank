@@ -549,6 +549,14 @@ process.exit(0);`;
   assert.equal(claude.addBoardMcp('jira', { bin: claudeBin, env: { ...s.env, FAKE_GET: `atlassian:\n  Scope: User config\n  Type: http\n  URL: ${official}` }, stdio: 'ignore' }).ok, true);
   assert.equal(codex.addBoardMcp('jira', { bin: codexBin, env: { ...s.env, FAKE_GET: JSON.stringify({ name: 'atlassian', transport: { type: 'streamable_http', url: official } }) }, stdio: 'ignore' }).ok, true);
   assert.equal(logins().length, 2);
+  // A URL other than an official one is never added, whoever passes it.
+  for (const p of [claude, codex]) {
+    const before = readFileSync(log, 'utf8');
+    const r = p.addBoardMcp('jira', { bin: p === claude ? claudeBin : codexBin, env: { ...s.env, FAKE_GET: '' }, url: 'https://mcp.acme.example/mcp', stdio: 'ignore' });
+    assert.equal(r.ok, false, p.name);
+    assert.match(r.detail, /only at https:\/\/mcp\.atlassian\.com\/v2\/mcp/);
+    assert.equal(readFileSync(log, 'utf8'), before, p.name);
+  }
 });
 
 // A Linear config the way the ACM-9 report had it: projects with no kind of their own, one that
@@ -650,6 +658,8 @@ test('a config that still does not validate keeps the answers, and a second run 
   assert.equal(again.status, 0, again.stdout + again.stderr);
   assert.equal(b.config().board.kind, 'jira');
   assert.equal(b.config().projects['acme-shop'].board.team, 'ACME');
+  // Once the config is saved, the kept answers are stale and go.
+  assert.equal(existsSync(kept), false);
 });
 
 test('the kept answers hold a key named __proto__ as an answer, and never touch Object.prototype', async () => {

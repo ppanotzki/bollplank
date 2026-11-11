@@ -49,7 +49,7 @@ Any other option exits 2. It never replaces a file or a link that is not its own
 
 | Key | Value |
 |---|---|
-| `kind` | `linear` or `jira`. Default `linear`, so an older answers file runs as before. |
+| `kind` | `linear` or `jira`. Left out, it is the saved config's kind, or `linear` when there is no config yet, so an older answers file runs as before. |
 | `addBoard.<kind>.<client>` | true or false, to add the board's MCP server to `claude` or `codex`. Default false. `addLinear.<client>` is still read for Linear. |
 | `team`, `project` | Linear: the team key or name, and the project. Jira: the site, such as `acme.atlassian.net`, and the project key, such as `ACM`. |
 | `space` | Jira only, optional. The Confluence space key for the release notes. A space's name is saved as its key. A space no client finds stops init with `usage`, and one no client can look up is kept as typed. |

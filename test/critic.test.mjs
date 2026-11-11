@@ -1883,7 +1883,18 @@ test('a stored text that no longer matches its sha256 makes critic pending fail'
   assert.equal(p.json.failure, 'pending-corrupt');
   assert.equal(p.json.text, undefined);
   rmSync(file);
-  assert.equal(b.cmd(['pending', '--ticket', 'ACM-1']).json.failure, 'pending-corrupt');
+  const gone = b.cmd(['pending', '--ticket', 'ACM-1']).json;
+  assert.equal(gone.failure, 'pending-corrupt');
+  // The failure names the state file and how the approver starts the round over.
+  assert.ok(gone.state.endsWith('ACM-1.codex.json'), gone.state);
+  assert.match(gone.detail, /removes the pending key from .*ACM-1\.codex\.json/);
+  const state = JSON.parse(readFileSync(gone.state, 'utf8'));
+  delete state.pending;
+  writeFileSync(gone.state, JSON.stringify(state));
+  const again = b.call({ lead: 'claude' });
+  assert.equal(again.status, 0, again.stdout);
+  assert.equal(again.json.round, 1);
+  assert.equal(again.json.pending, true);
 });
 
 test('two tickets with the same subject and round pending keep separate texts, and confirming one leaves the other', { skip: fakesSkip }, (t) => {
