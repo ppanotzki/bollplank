@@ -598,7 +598,7 @@ test('switching the board to Jira keeps the Linear projects on the board they ha
   assert.match(said, /acme-web stays on its Linear board, Linear team ACME, project Widgets\./);
   assert.match(said, /Saved the project key as ACME, the way Jira spells it\./);
   assert.match(said, /Acme Mobile is the Jira project ACM, so its key ACM is saved\./);
-  assert.equal(existsSync(join(b.s.bollplank, 'config.answers.json')), false);
+  assert.equal(existsSync(join(b.s.bollplank, 'config.kept-answers.json')), false);
 });
 
 test('a Jira answer that is not a site, a project key or a space key stops init at that question', { skip: fakesSkip }, (t) => {
@@ -635,7 +635,7 @@ test('a config that still does not validate keeps the answers, and a second run 
   const r = b.init({ approver: 'Ada', kind: 'jira', team: SITE, project: 'ACME', space: 'ACME', addProject: false });
   assert.notEqual(r.status, 0);
   assert.equal(r.json.failure, 'config');
-  const kept = join(b.s.bollplank, 'config.answers.json');
+  const kept = join(b.s.bollplank, 'config.kept-answers.json');
   assert.match(r.json.detail, /projects\.acme-shop\.board: a linear board in a config whose board is jira must set its own team/);
   assert.ok(r.json.detail.includes(`Your answers are in ${kept}.`));
   assert.ok(r.json.detail.includes(`bollplank init --answers "${kept}"`));

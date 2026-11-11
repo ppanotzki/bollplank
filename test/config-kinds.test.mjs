@@ -140,12 +140,31 @@ test('context gives each project its resolved kind and board', (t) => {
   assert.equal(shop.board.space, undefined);
   // In a Jira config a same kind project inherits the top level site, key and space.
   const j = jira();
-  j.projects['acme-web'] = { source: '/s', tickets: '/t', repos, board: { kind: 'linear', team: 'ACME', project: 'Web', statuses: jiraStatuses } };
+  j.projects['acme-web'] = { source: '/s', tickets: '/t', repos, board: { kind: 'linear', team: 'WEB', project: 'Web', statuses: jiraStatuses } };
   s.config(j);
   const both = s.run(['context']).json;
   assert.deepEqual(both.boards['acme-shop'], { kind: 'jira', team: 'acme.atlassian.net', project: 'ACME', space: 'ACME', statuses: jiraStatuses });
-  assert.deepEqual(both.boards['acme-web'], { kind: 'linear', team: 'ACME', project: 'Web', statuses: jiraStatuses });
+  assert.deepEqual(both.boards['acme-web'], { kind: 'linear', team: 'WEB', project: 'Web', statuses: jiraStatuses });
   assert.deepEqual(s.run(['context', 'acme-web']).json.board, both.boards['acme-web']);
+});
+
+test('two boards that would give tickets the same key are refused', () => {
+  // The same Jira project key on two sites.
+  const c = jira();
+  c.projects['acme-beta'] = { source: '/s', tickets: '/t', repos, board: { team: 'beta.atlassian.net', project: 'ACME' } };
+  const twice = validate(c);
+  assert.ok(twice.some((m) => m.includes('projects.acme-shop, projects.acme-beta: the Jira project key ACME is on more than one site (acme.atlassian.net, beta.atlassian.net)')), twice.join('\n'));
+  // A Jira project key that is also a Linear team key.
+  const d = jira();
+  d.projects['acme-web'] = { source: '/s', tickets: '/t', repos, board: { kind: 'linear', team: 'ACME', project: 'Web', statuses: jiraStatuses } };
+  const both = validate(d);
+  assert.ok(both.some((m) => m.includes('ACME is both a Jira project key and a Linear team key')), both.join('\n'));
+  // The same key on the same site, another key on another site, and a Linear team given by its name all pass.
+  const e = jira();
+  e.projects['acme-docs'] = { source: '/s', tickets: '/t', repos, board: { team: 'ACME.atlassian.net', project: 'ACME' } };
+  e.projects['acme-beta'] = { source: '/s', tickets: '/t', repos, board: { team: 'beta.atlassian.net', project: 'BETA' } };
+  e.projects['acme-web'] = { source: '/s', tickets: '/t', repos, board: { kind: 'linear', team: 'Acme Web', project: 'Web', statuses: jiraStatuses } };
+  assert.deepEqual(validate(e).filter((m) => /share one key/.test(m)), []);
 });
 
 // A Jira config with a cloud id, project id and space, and a Jira project on another site.
