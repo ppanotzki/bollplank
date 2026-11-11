@@ -705,6 +705,8 @@ test('the shipped prompts carry every placeholder, have the critic post on the i
     assert.match(text, /reply with exactly the text you posted/);
     assert.match(text, /Do not create, edit or delete any file/);
     assert.equal(/Do not post the critique anywhere/.test(text), false);
+    // The flat list request is for Jira only, so the Linear prompt does not carry it.
+    assert.equal(/Write flat text|nested list/.test(text), false, f);
     assert.equal(/[\u2013\u2014;]/.test(text), false, `${f} has a dash or semicolon`);
   }
 });
@@ -1656,6 +1658,7 @@ for (const [critic, lead] of jiraCritics) {
     assert.match(p, /every one of its comments with your Jira tools/);
     assert.match(p, /Do not post the critique\./);
     assert.match(p, /Pass cloud-acme as the cloudId in every Jira call\./);
+    assert.match(p, /Write flat text, since Jira re-indents nested lists and the lead's readback check then stops: no nested list, and no indented line under a list item\./);
     assert.equal(p.includes('Post the critique as one comment'), false);
     assert.equal(/\{(BOARD|ISSUE|REVIEWER|MODEL|WORKFLOW|INSTRUCTION)\}/.test(p), false);
   });

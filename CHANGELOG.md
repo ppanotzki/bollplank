@@ -13,6 +13,7 @@
 - `bollplank board safe-write jira --html <file>` checks a Jira description before it is replaced, and refuses when it holds content that markdown would drop, such as media, mentions, panels, statuses or tables. It reads the description as Atlassian's v2 server returns it in HTML, since that server returns no ADF. `--adf <file>` does the same for a description in ADF.
 - `bollplank board compare jira --sent <file> --got <file>` checks a Jira readback after Jira's own markdown rewrites: hard breaks at line ends, `*` bullets and a trailing newline. The board skill, the critique skill's recovery and the readback of consulting and configuration runs use it on Jira, where an exact match never holds.
 - The Jira critic reads the issue with its description, and a round counts only when the critic got it. The Claude critic is no longer stopped by read tools the server offers but the critic is not allowed, which it can only be refused. The Jira release notes page is found by listing the space's pages, since search can miss a new page for minutes.
+- On Jira, critiques, briefs and comments are written with flat lists, since Jira re-indents nested lists and their readback would not match. The Jira critic is asked for flat text.
 - `bollplank init` names the command to run when an Atlassian sign in cannot finish: `claude mcp login` needs a terminal, and `codex mcp add` can run past its time limit while you are in the browser.
 - Consulting and configuration runs on Jira check the readback against the cloud id and the numeric project id.
 
