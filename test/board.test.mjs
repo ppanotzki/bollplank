@@ -151,9 +151,9 @@ test('rich HTML fails and names each thing markdown would lose once', (t) => {
   assert.deepEqual(r.json.unsupported, ['table', 'panel-info', 'status', 'mention', 'emoji', 'img', 'p class', 'comment', 'code class']);
 });
 
-test('an empty or missing description passes, and a result read as markdown is refused', (t) => {
+test('an empty description passes, and a result read as markdown is refused', (t) => {
   const { s, file } = files(t);
-  for (const content of [issueResult(undefined), issueResult(null), issueResult(''), '']) {
+  for (const content of [issueResult(null), issueResult(''), '']) {
     const r = s.run(['board', 'safe-write', 'jira', '--html', file(content)]);
     assert.equal(r.status, 0, r.stdout);
     assert.equal(r.json.empty, true);
@@ -205,13 +205,27 @@ test('what does not read as a tag is refused, and the scan stays fast', async (t
   }
 });
 
-test('text with no tag is not HTML, and a missing description says so', (t) => {
+test('text with no tag is not HTML, and a result with no description field is refused', (t) => {
   const { s, file } = files(t);
   const md = s.run(['board', 'safe-write', 'jira', '--html', file('| A | B |\n|---|---|\n| 1 | 2 |')]);
   assert.equal(md.status, 1, md.stdout);
   assert.equal(md.json.failure, 'not-html');
-  const missing = s.run(['board', 'safe-write', 'jira', '--html', file(issueResult(undefined))]);
-  assert.deepEqual(missing.json, { ok: true, unsupported: [], empty: true, missing: true });
+  // The default view leaves the description out, so a result without it shows nothing about it.
+  const missing = s.run(['board', 'safe-write', 'jira', '--html', file({ data: { appliedContentFormat: 'html', key: 'ACM-1', fields: { summary: 'Brief' } } })]);
+  assert.equal(missing.status, 1, missing.stdout);
+  assert.equal(missing.json.failure, 'no-description');
   const hidden = s.run(['board', 'safe-write', 'jira', '--html', file('<p>a < b <img src=x></p>')]);
   assert.deepEqual(hidden.json.unsupported, ['img']);
+});
+
+test('compare keeps list markers inside code as content', async () => {
+  const { firstDifference } = await import('../lib/jira-text.mjs');
+  // A fenced diff where a deletion became an addition is a change, and so is the same in indented code.
+  assert.deepEqual(firstDifference('Diff:\n\n```\n- old\n+ new\n```\n', 'Diff:\n\n```\n+ old\n+ new\n```\n'), { line: 4, sent: '- old', got: '+ old' });
+  assert.notEqual(firstDifference('Diff:\n\n~~~sh\n* a\n~~~', 'Diff:\n\n~~~sh\n- a\n~~~'), null);
+  assert.notEqual(firstDifference('Diff:\n\n    - old\n    + new', 'Diff:\n\n    + old\n    + new'), null);
+  // A list keeps working around code, and a nested item deeper than 4 is still a list item.
+  assert.equal(firstDifference('- a\n    - deep\n\n```\nx\n```\n\n- b', '* a  \n    * deep\n\n```\nx\n```\n\n* b\n'), null);
+  // Trailing spaces in a fence are still Jira's to add.
+  assert.equal(firstDifference('```\nx\n```', '```  \nx  \n```'), null);
 });

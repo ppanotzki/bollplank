@@ -1795,6 +1795,9 @@ test('a Jira issue read counts only when it gave the critic the description', as
   // The server leaves out an empty description even when asked, so asking for it by key counts.
   assert.equal(work(read({ fields: ['description'], fieldsByKeys: true }, {})).issue, true);
   for (const args of [{ fields: ['description'] }, { fields: ['summary'], fieldsByKeys: true }, { fields: 'description', fieldsByKeys: true }]) assert.equal(work(read(args, {})).issue, false, JSON.stringify(args));
+  // A result that is not an issue never stands in for the description, whatever the call asked for.
+  const notIssue = { ...read({ fields: ['description'], fieldsByKeys: true }, {}), text: '{}' };
+  assert.deepEqual(work(notIssue), { issue: false, comments: false, posted: false, critique: null });
 });
 
 test('the Jira event checks allow executeRead only for listJiraIssueComments', () => {
