@@ -9,9 +9,9 @@ The other Bollplank skills speak of "the issue", "a comment" and "the ready stat
 
 ## Find the board and the project
 
-1. Run `bollplank context` once without a project. Its `board.kind` names the board, and `boards` maps each configured project to its board `team` and `project`, with the top level defaults filled in.
-2. Pick the project whose `boards` entry matches the issue's team and project, or the one the session works in. Then run `bollplank context <project>` and use its `board`. With a project, `board.statuses` is that project's own mapping, and `board.team` and `board.project` are its own team and project, with the top level ones filled in. Never take status names from `bollplank context` without a project, since a project in another team can name them differently.
-3. Follow `references/<board.kind>.md` for each operation below. Today the only kind is `linear`, in [references/linear.md](references/linear.md).
+1. Run `bollplank context` once without a project. Its `boards` maps each configured project to its board `kind`, `team` and `project`, with the top level defaults filled in for a project of the top level kind.
+2. Pick the project whose `boards` entry matches the issue's team and project, or the one the session works in. Then run `bollplank context <project>` and use its `board`. Its `board.kind` is that project's board, `linear` or `jira`. Take the kind from there, never from the top level, since projects can use different boards. With a project, `board.statuses` is that project's own mapping, and `board.team` and `board.project` are its own team and project, with the top level ones filled in. Never take status names from `bollplank context` without a project, since a project in another team can name them differently.
+3. Follow `references/<board.kind>.md` for each operation below: [references/linear.md](references/linear.md) for Linear and [references/jira.md](references/jira.md) for Jira.
 
 When the board's tools are missing in this session, stop and say so. Suggest `bollplank doctor`. Never fall back to an API key, a script or a web page.
 
@@ -23,7 +23,7 @@ When the board's tools are missing in this session, stop and say so. Suggest `bo
 - **Write the description:** replace the whole description, then read it back and compare.
 - **Post a comment,** then read it back and keep its link. **Update a comment** in place when a skill says to replace one.
 - **Set a status** by its configured name: `draft`, `ready`, `inProgress`, `acceptance` or `done` from `board.statuses`.
-- **Release notes:** find or create the project's document titled exactly "Release notes", add a section and read it back.
+- **Release notes:** find or create the project's document titled exactly "Release notes", add a section and read it back. A Jira project keeps them in its Confluence space, and only when `board.space` is set.
 - **Find raised issues:** every issue whose brief header has a `Raised by:` line naming this ticket.
 - **Readback:** the minimal JSON file the consulting and configuration runs need before `bollplank run init` and `rebaseline`.
 
@@ -31,8 +31,8 @@ When the board's tools are missing in this session, stop and say so. Suggest `bo
 
 No other skill uses these. Do one only when the user asks for it in this session.
 
-- **Create a project.** Confirm the team and the exact project name with the user first, and wait for a yes. Then call the board's create tool once, with no id of an existing project. Read the team's projects back and report whether the project is there with that name. Never update, rename or move an existing project as part of it. When a project with that name already exists, say so and create nothing.
-- **Check the statuses.** Run `bollplank context <project>` and take the five names from its `board.statuses`. Read the team's statuses and compare each name exactly. Report the ones that exist and the ones that are missing. The board's tools cannot create a status, so for each missing one give the steps to add it in the board's settings, and suggest `bollplank doctor` once they are added.
+- **Create a project.** Confirm the team and the exact project name with the user first, and wait for a yes. Then call the board's create tool once, with no id of an existing project. Read the team's projects back and report whether the project is there with that name. Never update, rename or move an existing project as part of it. When a project with that name already exists, say so and create nothing. Bollplank uses no Jira tool to create a project, so on Jira say that the person creates it in Jira itself.
+- **Check the statuses.** Run `bollplank context <project>` and take the five names from its `board.statuses`. Read the team's statuses, or on Jira the project's, and compare each name exactly. Report the ones that exist and the ones that are missing. The board's tools cannot create a status, so for each missing one give the steps to add it in the board's settings, and suggest `bollplank doctor` once they are added.
 
 ## Rules
 

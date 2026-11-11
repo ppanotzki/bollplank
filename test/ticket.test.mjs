@@ -82,6 +82,17 @@ test('create checks its arguments and refuses unknown repos and ticket ids', (t)
   assert.equal(existsSync(f.folder('ACME-1')), false);
 });
 
+test('a ticket key with an underscore, as a Jira project key allows, gets its folder and branch', (t) => {
+  const f = setup(t);
+  const r = f.ticket('create', 'acme-shop', 'acme_x-1', '--slug', 'Add Thing', '--change', 'acme-api');
+  assert.equal(r.status, 0, r.stdout);
+  assert.equal(r.json.ticket, 'ACME_X-1');
+  assert.equal(r.json.branch, 'acme_x-1-add-thing');
+  assert.equal(g(join(f.folder('ACME_X-1'), 'acme-api'), 'rev-parse', '--abbrev-ref', 'HEAD'), 'acme_x-1-add-thing');
+  assert.equal(f.ticket('status', 'acme-shop', 'ACME_X-1').json.ok, true);
+  assert.equal(f.ticket('create', 'acme-shop', '_ACME-1', '--slug', 'x', '--change', 'acme-api').status, 2);
+});
+
 test('a create that fails partway rolls back the worktrees it made', (t) => {
   const f = setup(t);
   // acme-web already has the ticket branch, so its worktree add fails after acme-api's succeeded.

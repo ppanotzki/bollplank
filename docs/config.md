@@ -10,16 +10,17 @@ Bollplank reads `~/.bollplank/config.json` (or `$BOLLPLANK_HOME/config.json`) on
 |---|---|---|---|
 | `approver.name` | yes | | The person whose explicit words approve a brief and accept a ticket. Approval lines name them exactly. |
 | `copyStyle` | no | empty | How briefs and comments are written. |
-| `board.kind` | yes | | `linear`, the only board. |
-| `board.team`, `board.project` | no | | The Linear team key and project for projects that name none. |
-| `board.statuses` | no | Linear's suggestion | The status names for `draft`, `ready`, `inProgress`, `acceptance` and `done`, for projects that map none of their own. Linear's suggestion is `Draft`, `Ready`, `In Progress`, `Acceptance`, `Done`. |
+| `board.kind` | yes | | `linear` or `jira`. The board for projects that name none. |
+| `board.team`, `board.project` | no | | Linear: the team key and project. Jira: the site, such as `acme.atlassian.net`, and the project key, such as `ACM`. For projects of the same kind that name none. |
+| `board.space` | no | | Jira only. The Confluence space key that holds the "Release notes" page. Without it, release notes are only in the ticket's comment and the CHANGELOG. |
+| `board.statuses` | no | the kind's suggestion | The status names for `draft`, `ready`, `inProgress`, `acceptance` and `done`, for projects that map none of their own. The suggestion for both kinds is `Draft`, `Ready`, `In Progress`, `Acceptance`, `Done`. |
 | `critic.default` | no | `other` | `other`, `same`, `claude` or `codex`. |
 | `critic.providers.<claude or codex>` | no | | `model` and `effort` for that critic. |
 | `critic.same.<claude or codex>` | no | `critic.providers` | `model` and `effort` for a same provider critic. |
 | `shipLock` | no | `~/.bollplank/ship.lock` | The shipping lock folder. |
 | `projects` | yes | | One entry per project, by name. |
 
-A status is used only by its exact name. Each state's name comes from the project's own `board.statuses`, then the top level `board.statuses`, then Linear's suggestion. A key other than the five states, such as `in_progress`, fails validation, since it would leave the state at its fallback. [existing-project.md](existing-project.md) shows a mapping.
+A status is used only by its exact name. Each state's name comes from the project's own `board.statuses`, then the top level `board.statuses`, then the kind's suggestion. A project whose kind differs from the top level skips the top level names. A key other than the five states, such as `in_progress`, fails validation, since it would leave the state at its fallback. [existing-project.md](existing-project.md) shows a mapping.
 
 **The critic.** `other` is the client that is not leading. `same` is the lead's own client in a separate session ([same-model.md](same-model.md)). `claude` or `codex` names one, and when it equals the lead the review counts as same provider. A project's `critic.default` wins over the top level one, a brief's approved `Critic:` line wins over both, and `bollplank critic --critic` overrides them for one call. Nothing switches on its own. Nothing is pinned by default, so each client runs its own default model.
 
@@ -36,12 +37,43 @@ A status is used only by its exact name. Each state's name comes from the projec
 | `validatesAgainst` | no | `{}` | For each repo, the repos its changes are checked against, read only. |
 | `shipOrder` | no | the order of `repos` | The merge and deploy order. When given, it lists every repo exactly once. |
 | `critic.default` | no | the top level one | The critic for this project's tickets. |
-| `board.team`, `board.project` | no | the top level ones | The Linear team key and project for this project's issues. When given, each is a name, not empty. |
-| `board.statuses` | no | the top level ones | This project's own status names, for a team whose statuses differ. |
-| `board.teamId`, `board.projectId` | consulting and configuration | | The Linear ids a readback is compared against. |
+| `board.kind` | no | the top level `board.kind` | `linear` or `jira`. The board this project's issues live on. |
+| `board.team`, `board.project` | no | the top level ones, for the same kind | The project's team and project: on Linear the team key and project name, on Jira the site and project key. When given, each is a name, not empty. |
+| `board.space` | no | the top level one, for the same kind | Jira only. The project's Confluence space key. |
+| `board.statuses` | no | the top level ones, for the same kind | This project's own status names, for a team whose statuses differ. |
+| `board.teamId`, `board.projectId` | consulting and configuration | | The ids a readback is compared against. On Linear the team id and project id. On Jira the site's cloud id and the numeric Jira project id. |
 | `runs` | no | `false` | Ticket runs are allowed only when `true`. |
 | `privateScan` | no | `false` | `bollplank merge` scans the PR head, history, title and body for private names. |
 | `stopList` | no | `[]` | What a run stops and asks about. Empty means the run skill's own list. |
+
+### Boards of two kinds
+
+Each project's board kind is its own `board.kind`, else the top level `board.kind`. A project of the top level kind takes the top level `team`, `project`, `space` and statuses for anything it leaves out. A project of another kind takes nothing from the top level board, so it must set its own `team`, `project` and all five statuses, or validation fails. A Jira `team` is a site host ending in `.atlassian.net`, a Jira `project` is a key of capital letters and digits, and `space` is allowed on a Jira board only.
+
+A Linear config with one project on Jira, with made up names:
+
+```json
+{
+  "approver": { "name": "Ada" },
+  "board": { "kind": "linear", "team": "ACME", "project": "Acme Shop" },
+  "projects": {
+    "acme-ops": {
+      "source": "~/Code/acme-ops",
+      "tickets": "~/Code/acme-ops-tickets",
+      "repos": { "acme-infra": { "github": "acme/acme-infra" } },
+      "board": {
+        "kind": "jira",
+        "team": "acme.atlassian.net",
+        "project": "ACM",
+        "space": "ACM",
+        "statuses": { "draft": "Draft", "ready": "Ready", "inProgress": "In Progress", "acceptance": "Acceptance", "done": "Done" }
+      }
+    }
+  }
+}
+```
+
+Issues of `acme-ops` are keys such as `ACM-1` on `acme.atlassian.net`, and its release notes go to the "Release notes" page in the Confluence space `ACM`. `bollplank context acme-ops` prints `board.kind` as `jira`. A config whose top level `board.kind` is `jira` works the same way, with Linear projects as the other kind.
 
 ### Repos
 
