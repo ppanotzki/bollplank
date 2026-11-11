@@ -108,8 +108,10 @@ test('a heading level outside 1 to 6 fails, other attrs are fine, and a very wid
   const wide = check({ type: 'doc', version: 1, content: Array.from({ length: 200000 }, () => para(text('x'))) });
   assert.equal(wide.status, 0, wide.stdout + wide.stderr);
   assert.deepEqual(wide.json, { ok: true, unsupported: [] });
-  let deep = para(text('x'));
-  for (let i = 0; i < 5000; i++) deep = { type: 'blockquote', content: [deep] };
-  const d = check(doc(deep, { type: 'heading', attrs: { level: 9 }, content: [] }));
+  // The deep document is written as JSON text, since JSON.stringify of 5000 levels overflows the
+  // stack on Node 20 to 24. The command reads it with JSON.parse and no recursion of its own.
+  const depth = 5000;
+  const deep = `${'{"type":"blockquote","content":['.repeat(depth)}${JSON.stringify(para(text('x')))}${']}'.repeat(depth)}`;
+  const d = check(`{"type":"doc","version":1,"content":[${deep},${JSON.stringify({ type: 'heading', attrs: { level: 9 }, content: [] })}]}`);
   assert.deepEqual(d.json.unsupported, ['heading level 9']);
 });
