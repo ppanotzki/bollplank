@@ -1923,6 +1923,35 @@ test('a pending Jira round is handed out only for its own board', { skip: fakesS
   assert.deepEqual(b.state('ACM-1.codex.json').rounds, { brief: 0, plan: 0, code: 0 });
 });
 
+test('a confirmed Jira round keeps its board, so another board with the same key never resumes its session', { skip: fakesSkip }, (t) => {
+  const b = jiraBox();
+  after(t, b);
+  assert.equal(b.call({ lead: 'claude' }).status, 0);
+  const file = b.state('ACM-1.codex.json').pending.file;
+  assert.equal(b.cmd(['confirm', '--ticket', 'ACM-1', '--subject', 'brief', '--round', '1', '--text-file', file, '--comment', 'x']).json.counted, true);
+  assert.deepEqual(b.state('ACM-1.codex.json').board, { site: 'acme.atlassian.net', cloudId: 'cloud-acme' });
+  const started = b.reviews().length;
+  const c = JSON.parse(readFileSync(join(b.s.bollplank, 'config.json'), 'utf8'));
+  c.projects['acme-portal'].board = { ...c.projects['acme-portal'].board, team: 'beta.atlassian.net', teamId: 'cloud-beta' };
+  writeFileSync(join(b.s.bollplank, 'config.json'), JSON.stringify(c));
+  const r = b.call({ lead: 'claude', subject: 'plan' });
+  assert.equal(r.json.failure, 'critic-other-board', r.stdout);
+  assert.ok(r.json.state.endsWith('ACM-1.codex.json'));
+  assert.equal(b.reviews().length, started);
+});
+
+test('a critic call on a Jira board without a project is refused before any client starts', { skip: fakesSkip }, (t) => {
+  const b = jiraBox();
+  after(t, b);
+  const c = JSON.parse(readFileSync(join(b.s.bollplank, 'config.json'), 'utf8'));
+  c.board = { ...c.projects['acme-portal'].board };
+  writeFileSync(join(b.s.bollplank, 'config.json'), JSON.stringify(c));
+  const r = b.call({ lead: 'claude', project: null });
+  assert.equal(r.json.failure, 'usage', r.stdout);
+  assert.match(r.json.detail, /needs --project/);
+  assert.equal(b.reviews().length, 0);
+});
+
 test('two tickets with the same subject and round pending keep separate texts, and confirming one leaves the other', { skip: fakesSkip }, (t) => {
   const b = jiraBox();
   after(t, b);

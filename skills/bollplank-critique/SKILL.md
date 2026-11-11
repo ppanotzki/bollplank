@@ -46,6 +46,7 @@ For a configuration run, identify a plan by its immutable snapshot path and sha2
    - `board-unreachable`: the critic did not read the issue and its comments. Its reply is not used. Report it to the approver. Unless the result says `counted: true`, the round is not counted and a retry with the same round resumes the session.
    - `round-mismatch`: the board and the wrapper disagree about the round. Read the board again and report. Never change the number until it passes.
    - `session-missing`: the client lost the critic's session. Call again with the same round and `--new-session`. The round counts are kept, and the result says `sessionRestarted`.
+   - `critic-other-board`: the saved critic state of this ticket key belongs to another Jira board. No client ran. Report it to the approver with the state file it names, and do not call again until they decide.
    - `post-pending`: a Jira round is waiting for its post. Do not call the critic again. Do the recovery in the Jira steps below for the round it names, then make the new call.
    - `critic-busy`: another call for this ticket and critic is running. Wait for it. Never remove the lock folder while a call may be running.
    - `critic-used-tools`: the client gave the critic a tool, an MCP server or a connector it is not allowed, or the critic used one. The reply was not used. Report it and do not retry until the client's setup is fixed.

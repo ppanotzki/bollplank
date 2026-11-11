@@ -69,6 +69,7 @@ A success has `critic`, `mode` (`other`, `same` or `named`), `delivery` (`posted
 | `critic-unavailable` | The client is not found, not signed in with a subscription, or has no board server that is connected and signed in. For Jira that is Atlassian's server at its official URL. Or Claude Code's user settings set a key or a provider route or let the critic read outside its folder, or its managed settings could keep hooks on, or Codex could not switch off its other MCP servers. Nothing else is tried. `fix` says what to do. |
 | `critic-busy` | Another call for this ticket, provider and mode is running. The detail names its lock folder. |
 | `post-pending` | A Jira round is waiting for the lead's post and confirm. The detail names its subject and round. No client runs. |
+| `critic-other-board` | The critic state of this ticket key belongs to a Jira board at another site or cloud id, so its session is not resumed. No client runs. The detail names the state file the approver removes to start over. |
 | `round-mismatch` | The round is not the next one. `expected` says which is. No client runs. |
 | `state` | The saved critic state cannot be read. |
 | `session-missing` | The client lost the session. Retry with `--new-session`. |
