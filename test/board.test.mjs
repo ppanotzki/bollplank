@@ -229,3 +229,14 @@ test('compare keeps list markers inside code as content', async () => {
   // Trailing spaces in a fence are still Jira's to add.
   assert.equal(firstDifference('```\nx\n```', '```  \nx  \n```'), null);
 });
+
+test('compare allows only "- " coming back as "* ", so no code change hides in it', async () => {
+  const { firstDifference } = await import('../lib/jira-text.mjs');
+  // Code round 2: the second line of an indented block, and code inside a list.
+  assert.notEqual(firstDifference('Text\n\n    context\n    - old', 'Text\n\n    context\n    + old'), null);
+  assert.notEqual(firstDifference('- item\n\n      - old', '* item\n\n      + old'), null);
+  assert.notEqual(firstDifference('+ a', '* a'), null);
+  assert.notEqual(firstDifference('* a', '- a'), null);
+  assert.equal(firstDifference('- a\n    - b', '* a  \n    * b\n'), null);
+  assert.notEqual(firstDifference('```\n- a\n```', '```\n* a\n```'), null);
+});

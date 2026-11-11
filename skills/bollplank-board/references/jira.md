@@ -10,7 +10,7 @@ Read Jira text with `responseContentFormat: "markdown"` and write it with `conte
 
 `getJiraIssue` leaves the description out of its default view. Pass `fields: ["description"]` and `fieldsByKeys: true` whenever you need it. An empty description is left out even then.
 
-Jira changes markdown on the way back: every single newline comes back as two trailing spaces and a newline, `- ` bullets come back as `* `, and a trailing newline is added. So a readback is never compared byte for byte. Save what you sent and what Jira returned to two files in your scratch space, unchanged, and run `bollplank board compare jira --sent <file> --got <file>`. It allows only those rewrites. Exit 0 is a match. Otherwise it names the first line that differs. Then stop and tell the approver. Never edit either text to make them match.
+Jira changes markdown on the way back: every single newline comes back as two trailing spaces and a newline, `- ` bullets come back as `* `, and a trailing newline is added. So a readback is never compared byte for byte. Save what you sent and what Jira returned to two files in your scratch space, unchanged, and run `bollplank board compare jira --sent <file> --got <file>`. It allows only those rewrites, and no bullet change inside a fenced code block. Exit 0 is a match. Otherwise it names the first line that differs. Then stop and tell the approver. Never edit either text to make them match.
 
 Source: https://support.atlassian.com/atlassian-rovo-mcp-server/docs/supported-tools/ and https://github.com/atlassian/atlassian-mcp-server, read on 10 November 2026, and the tools' own schemas and live calls on the v2 server on 11 November 2026.
 
