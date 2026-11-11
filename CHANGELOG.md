@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.0 (2026-11-10)
+## 0.7.0 (2026-11-11)
 
 - Jira Cloud is a second board kind beside Linear. Set `board.kind` to `"jira"`, with `team` as the Jira site, such as `acme.atlassian.net`, and `project` as the Jira project key. Bollplank reaches Jira only through Atlassian's official MCP server, matched by its URL, signed in with your own account in Claude Code and Codex.
 - The board kind can be set per project, so one config can hold Linear and Jira projects. A project of the top level kind inherits team, project and statuses as before. A project of another kind inherits none of them and must set its own team, project and all five statuses.
