@@ -115,3 +115,103 @@ test('a heading level outside 1 to 6 fails, other attrs are fine, and a very wid
   const d = check(`{"type":"doc","version":1,"content":[${deep},${JSON.stringify({ type: 'heading', attrs: { level: 9 }, content: [] })}]}`);
   assert.deepEqual(d.json.unsupported, ['heading level 9']);
 });
+
+// The HTML check and the compare, with the shapes Atlassian's v2 server returned on 11 November
+// 2026, under made up names.
+function files(t) {
+  const s = sandbox();
+  t.after(s.clean);
+  let n = 0;
+  const file = (content) => {
+    const f = join(s.root, `f-${++n}.txt`);
+    writeFileSync(f, typeof content === 'string' ? content : JSON.stringify(content));
+    return f;
+  };
+  return { s, file };
+}
+
+const issueResult = (description, applied = 'html') => ({ data: { appliedContentFormat: applied, id: '10001', key: 'ACM-1', fields: description === undefined ? {} : { description } } });
+const plainHtml = '<p>Brief v1\nResponsible: Claude Code\nApproval: Pending</p><h2>Why</h2><p>Acme&#039;s <strong>board</strong> and <em>notes</em>, see <a href="https://acme.atlassian.net/browse/ACM-2">ACM-2</a> and <code>run</code>.</p><ol start="2"><li><p>One</p></li></ol><ul><li><p>Two</p></li></ul><pre data-unique-id="ab12"><code class="language-sh">bollplank doctor</code></pre><blockquote><p>Quote</p></blockquote><hr><p>Line<br>break</p>';
+
+test('a plain description in HTML passes, as a raw result or as the description string', (t) => {
+  const { s, file } = files(t);
+  for (const content of [issueResult(plainHtml), plainHtml]) {
+    const r = s.run(['board', 'safe-write', 'jira', '--html', file(content)]);
+    assert.equal(r.status, 0, r.stdout);
+    assert.deepEqual(r.json, { ok: true, unsupported: [] });
+  }
+});
+
+test('rich HTML fails and names each thing markdown would lose once', (t) => {
+  const { s, file } = files(t);
+  const rich = '<p>Intro</p><table><thead><tr><th><p>A</p></th></tr></thead><tbody><tr><td><p>1</p></td></tr></tbody></table><div data-type="panel-info"><p>Note</p></div><p><span data-type="status" data-color="blue">OPEN</span> <span data-type="mention" data-user-id="1">@Ada</span> <span data-type="emoji" data-shortname=":smile:">x</span></p><img src="x.png"><p class="lead">Text</p><!-- note --><code class="nope here">x</code>';
+  const r = s.run(['board', 'safe-write', 'jira', '--html', file(issueResult(rich))]);
+  assert.equal(r.status, 1, r.stdout);
+  assert.equal(r.json.failure, 'unsupported');
+  assert.deepEqual(r.json.unsupported, ['table', 'panel-info', 'status', 'mention', 'emoji', 'img', 'p class', 'comment', 'code class']);
+});
+
+test('an empty or missing description passes, and a result read as markdown is refused', (t) => {
+  const { s, file } = files(t);
+  for (const content of [issueResult(undefined), issueResult(null), issueResult(''), '']) {
+    const r = s.run(['board', 'safe-write', 'jira', '--html', file(content)]);
+    assert.equal(r.status, 0, r.stdout);
+    assert.equal(r.json.empty, true);
+  }
+  const md = s.run(['board', 'safe-write', 'jira', '--html', file(issueResult('Brief v1', 'markdown'))]);
+  assert.equal(md.status, 1, md.stdout);
+  assert.equal(md.json.failure, 'not-html');
+  const bad = s.run(['board', 'safe-write', 'jira', '--html', file('{"data":')]);
+  assert.equal(bad.json.failure, 'not-html');
+  const both = s.run(['board', 'safe-write', 'jira', '--html', file(plainHtml), '--adf', file('')]);
+  assert.equal(both.status, 2, both.stdout);
+});
+
+test('compare allows only Jira\'s known rewrites', (t) => {
+  const { s, file } = files(t);
+  const sent = 'Brief v1\nResponsible: Claude Code\n\n## Scope\n\n- One\n  - Two\n1. Three\n';
+  const got = 'Brief v1  \r\nResponsible: Claude Code  \n\n## Scope\n\n* One\n  * Two\n1. Three\n\n';
+  const ok = s.run(['board', 'compare', 'jira', '--sent', file(sent), '--got', file(got)]);
+  assert.equal(ok.status, 0, ok.stdout);
+  assert.deepEqual(ok.json, { ok: true });
+  for (const [changed, line] of [['Brief v1\nResponsible: Claude Code\n\n## Scope\n\n* One\n  * Too\n1. Three', 7], ['Brief v1\nResponsible:  Claude Code', 2], ['Brief v1', 2], ['Brief v1\nResponsible: Claude Code\n\n## Scope\n\n* One\n  * Two\n2. Three', 8]]) {
+    const r = s.run(['board', 'compare', 'jira', '--sent', file(sent), '--got', file(changed)]);
+    assert.equal(r.status, 1, r.stdout);
+    assert.equal(r.json.failure, 'differs');
+    assert.equal(r.json.line, line, changed);
+  }
+  assert.equal(s.run(['board', 'compare', 'jira', '--sent', file(sent)]).status, 2);
+  assert.equal(s.run(['board', 'compare', 'linear', '--sent', file(sent), '--got', file(got)]).status, 2);
+});
+
+test('what does not read as a tag is refused, and the scan stays fast', async (t) => {
+  const { htmlUnsupported } = await import('../lib/jira-text.mjs');
+  for (const html of ['<svg/onload=alert(1)>', '<img/src=x>', '<a/onclick=y>', '<img / >', '<p><img src="x" alt="a b" / ></p>', '<a href="x" / onclick=y>', '<img =x>', '<img:x>', '<x_y>', '<pé>', '<![CDATA[x]]>', '<!x>', '<?x>', '<!DOCTYPE html>', '<p', '</ p>', '</>', '<a href="x>y']) {
+    assert.ok(htmlUnsupported(html).length > 0, html);
+  }
+  for (const html of ['<p>ok</p><br/><br />', '<p>a < b and 3<4</p>', '<a href="https://acme.test/?a=1&b=2">x</a>', '</p >', '<code class="language-python">x</code>']) assert.deepEqual(htmlUnsupported(html), [], html);
+  // Inputs that made a regex try every split now take one pass.
+  const started = Date.now();
+  htmlUnsupported(`<p${' x="1 2"'.repeat(40)} /x`);
+  htmlUnsupported('<a x'.repeat(32000));
+  htmlUnsupported('<p>x</p>'.repeat(100000));
+  assert.ok(Date.now() - started < 2000, `${Date.now() - started} ms`);
+  // A JSON result must name appliedContentFormat "html", and a JSON list is never HTML.
+  const { s, file } = files(t);
+  for (const content of [{ data: { key: 'ACM-1', fields: { description: '| a |\n|---|\n| 1 |' } } }, { appliedContentFormat: 5, data: { fields: { description: '<p>x</p>' } } }, [issueResult('<div data-type="panel-info">x</div>')]]) {
+    const r = s.run(['board', 'safe-write', 'jira', '--html', file(content)]);
+    assert.equal(r.status, 1, JSON.stringify(content));
+    assert.equal(r.json.failure, 'not-html', JSON.stringify(content));
+  }
+});
+
+test('text with no tag is not HTML, and a missing description says so', (t) => {
+  const { s, file } = files(t);
+  const md = s.run(['board', 'safe-write', 'jira', '--html', file('| A | B |\n|---|---|\n| 1 | 2 |')]);
+  assert.equal(md.status, 1, md.stdout);
+  assert.equal(md.json.failure, 'not-html');
+  const missing = s.run(['board', 'safe-write', 'jira', '--html', file(issueResult(undefined))]);
+  assert.deepEqual(missing.json, { ok: true, unsupported: [], empty: true, missing: true });
+  const hidden = s.run(['board', 'safe-write', 'jira', '--html', file('<p>a < b <img src=x></p>')]);
+  assert.deepEqual(hidden.json.unsupported, ['img']);
+});

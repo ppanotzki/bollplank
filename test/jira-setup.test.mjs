@@ -332,7 +332,7 @@ test('a server named atlassian at another URL is never used, by either client', 
   assert.equal(b.calls().some((k) => k.args[0] === '-p' || k.args[0] === 'exec'), false);
   // addBoardMcp leaves such a server alone in both clients.
   for (const p of [claude, codex]) {
-    const added = p.addBoardMcp('jira', { bin: join(b.s.fakes, p.name), env: b.probeEnv(), stdio: 'ignore' });
+    const added = p.addBoardMcp('jira', { bin: join(b.s.fakes, p.name), env: b.probeEnv(), stdio: 'ignore', tty: true });
     assert.equal(added.ok, false);
     assert.match(added.detail, /already has a server named atlassian that does not point at https:\/\/mcp\.atlassian\.com\/v2\/mcp/);
   }
@@ -346,7 +346,7 @@ test('a server named atlassian at another URL is never used, by either client', 
 
 test('addBoardMcp runs the documented Atlassian add and login commands for each client', { skip: fakesSkip }, (t) => {
   const b = box(t, { jira: 'none' });
-  for (const p of [claude, codex]) assert.equal(p.addBoardMcp('jira', { bin: join(b.s.fakes, p.name), env: b.probeEnv(), stdio: 'ignore' }).ok, true);
+  for (const p of [claude, codex]) assert.equal(p.addBoardMcp('jira', { bin: join(b.s.fakes, p.name), env: b.probeEnv(), stdio: 'ignore', tty: true }).ok, true);
   const mcp = b.calls().filter((k) => k.args[0] === 'mcp').map((k) => `${k.tool} ${k.args.join(' ')}`);
   assert.deepEqual(mcp, [
     'claude mcp get atlassian',
@@ -532,7 +532,7 @@ process.exit(0);`;
     `atlassian:\n  URL: ${official}\n  URL: https://acme.example/mcp`,
   ];
   for (const out of claudeOutputs) {
-    const r = claude.addBoardMcp('jira', { bin: claudeBin, env: { ...s.env, FAKE_GET: out }, stdio: 'ignore' });
+    const r = claude.addBoardMcp('jira', { bin: claudeBin, env: { ...s.env, FAKE_GET: out }, stdio: 'ignore', tty: true });
     assert.equal(r.ok, false, out);
     assert.match(r.detail, /does not point at/);
   }
@@ -541,18 +541,18 @@ process.exit(0);`;
     { name: 'atlassian', transport: { type: 'streamable_http', url: 'https://acme.example/mcp' }, note: official, url: official },
   ];
   for (const out of codexOutputs) {
-    const r = codex.addBoardMcp('jira', { bin: codexBin, env: { ...s.env, FAKE_GET: JSON.stringify(out) }, stdio: 'ignore' });
+    const r = codex.addBoardMcp('jira', { bin: codexBin, env: { ...s.env, FAKE_GET: JSON.stringify(out) }, stdio: 'ignore', tty: true });
     assert.equal(r.ok, false, JSON.stringify(out));
   }
   assert.deepEqual(logins(), []);
   // The server's own official URL is signed in to.
-  assert.equal(claude.addBoardMcp('jira', { bin: claudeBin, env: { ...s.env, FAKE_GET: `atlassian:\n  Scope: User config\n  Type: http\n  URL: ${official}` }, stdio: 'ignore' }).ok, true);
-  assert.equal(codex.addBoardMcp('jira', { bin: codexBin, env: { ...s.env, FAKE_GET: JSON.stringify({ name: 'atlassian', transport: { type: 'streamable_http', url: official } }) }, stdio: 'ignore' }).ok, true);
+  assert.equal(claude.addBoardMcp('jira', { bin: claudeBin, env: { ...s.env, FAKE_GET: `atlassian:\n  Scope: User config\n  Type: http\n  URL: ${official}` }, stdio: 'ignore', tty: true }).ok, true);
+  assert.equal(codex.addBoardMcp('jira', { bin: codexBin, env: { ...s.env, FAKE_GET: JSON.stringify({ name: 'atlassian', transport: { type: 'streamable_http', url: official } }) }, stdio: 'ignore', tty: true }).ok, true);
   assert.equal(logins().length, 2);
   // A URL other than an official one is never added, whoever passes it.
   for (const p of [claude, codex]) {
     const before = readFileSync(log, 'utf8');
-    const r = p.addBoardMcp('jira', { bin: p === claude ? claudeBin : codexBin, env: { ...s.env, FAKE_GET: '' }, url: 'https://mcp.acme.example/mcp', stdio: 'ignore' });
+    const r = p.addBoardMcp('jira', { bin: p === claude ? claudeBin : codexBin, env: { ...s.env, FAKE_GET: '' }, url: 'https://mcp.acme.example/mcp', stdio: 'ignore', tty: true });
     assert.equal(r.ok, false, p.name);
     assert.match(r.detail, /only at https:\/\/mcp\.atlassian\.com\/v2\/mcp/);
     assert.equal(readFileSync(log, 'utf8'), before, p.name);
@@ -774,4 +774,44 @@ test('doctor passes a space whose key only the list returned', { skip: fakesSkip
   // DOCS cannot be read by key in the fakes, but the list returns it.
   const d = byId(b.s.run(['doctor', '--json'], b.env));
   assert.equal(d[`board.jira.space.${SITE}.DOCS`]?.ok, true, JSON.stringify(d[`board.jira.space.${SITE}.DOCS`]));
+});
+
+test('a sign in that cannot finish names the command to run, and init runs again', { skip: fakesSkip }, (t) => {
+  const s = sandbox();
+  t.after(s.clean);
+  const log = join(s.root, 'mcp.jsonl');
+  const marker = join(s.root, 'added');
+  // mcp get finds the server once mcp add has made it. A slow add stands for a browser sign in that
+  // is still open when the timeout ends it.
+  const fake = `const fs = require('node:fs');
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(args) + '\\n');
+if (args[0] === 'mcp' && args[1] === 'get') {
+  if (!fs.existsSync(${JSON.stringify(marker)})) process.exit(1);
+  console.log(JSON.stringify({ name: 'atlassian', transport: { type: 'streamable_http', url: 'https://mcp.atlassian.com/v2/mcp' } }));
+  process.exit(0);
+}
+if (args[0] === 'mcp' && args[1] === 'add') {
+  fs.writeFileSync(${JSON.stringify(marker)}, '');
+  if (process.env.FAKE_SLOW) setTimeout(() => process.exit(0), 20000);
+  else process.exit(0);
+} else process.exit(0);`;
+  const claudeBin = s.fake('claude', fake);
+  const codexBin = s.fake('codex', fake);
+  const calls = () => (existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l).slice(0, 2).join(' ')) : []);
+  // Without a terminal, Claude Code's server is added and the sign in is left to the person.
+  const c = claude.addBoardMcp('jira', { bin: claudeBin, env: s.env, stdio: 'ignore', tty: false });
+  assert.equal(c.ok, false);
+  assert.equal(c.needsLogin, true);
+  assert.equal(c.added, true);
+  assert.match(c.detail, /needs a terminal\. Run `claude mcp login atlassian` in a terminal, then run `bollplank init` again\./);
+  assert.deepEqual(calls(), ['mcp get', 'mcp add']);
+  rmSync(marker);
+  rmSync(log);
+  // A Codex add that the timeout ends leaves the server there, not signed in.
+  const x = codex.addBoardMcp('jira', { bin: codexBin, env: { ...s.env, FAKE_SLOW: '1' }, stdio: 'ignore', addTimeoutMs: 1500 });
+  assert.equal(x.ok, false);
+  assert.equal(x.needsLogin, true);
+  assert.match(x.detail, /Codex has the Atlassian MCP now, but its sign in did not finish within 1 minute\. Run `codex mcp login atlassian`, then run `bollplank init` again\./);
+  assert.deepEqual(calls(), ['mcp get', 'mcp add', 'mcp get']);
 });

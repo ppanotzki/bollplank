@@ -521,8 +521,8 @@ test('judge keeps every name with its own team: by the call\'s arguments, never 
 test('addLinearMcp runs the documented add and login commands for each client', { skip: fakesSkip }, (t) => {
   const b = box(t, { linear: 'none' });
   const env = { ...b.s.env, ...b.env };
-  const c = claude.addLinearMcp({ bin: join(b.s.fakes, 'claude'), env, url: LINEAR_MCP_URL, stdio: 'ignore' });
-  const x = codex.addLinearMcp({ bin: join(b.s.fakes, 'codex'), env, url: LINEAR_MCP_URL, stdio: 'ignore' });
+  const c = claude.addLinearMcp({ bin: join(b.s.fakes, 'claude'), env, url: LINEAR_MCP_URL, stdio: 'ignore', tty: true });
+  const x = codex.addLinearMcp({ bin: join(b.s.fakes, 'codex'), env, url: LINEAR_MCP_URL, stdio: 'ignore', tty: true });
   assert.equal(c.ok, true, c.detail);
   assert.equal(x.ok, true, x.detail);
   const mcp = b.calls().filter((k) => k.args[0] === 'mcp').map((k) => `${k.tool} ${k.args.join(' ')}`);
@@ -535,7 +535,7 @@ test('addLinearMcp runs the documented add and login commands for each client', 
     'codex mcp login linear',
   ]);
   // A second time the server is there, so it is only signed in to.
-  assert.equal(claude.addLinearMcp({ bin: join(b.s.fakes, 'claude'), env, url: LINEAR_MCP_URL, stdio: 'ignore' }).added, false);
+  assert.equal(claude.addLinearMcp({ bin: join(b.s.fakes, 'claude'), env, url: LINEAR_MCP_URL, stdio: 'ignore', tty: true }).added, false);
 });
 
 test('init with answers writes a valid config and links every skill for each client', { skip: fakesSkip }, (t) => {
@@ -760,16 +760,18 @@ test('init reports a key sign in, does not use it, and warns about key variables
   assert.equal(b.config().critic.default, 'same');
 });
 
-test('a failed probe offers the Linear MCP, adds it on a yes, and checks again', { skip: fakesSkip }, (t) => {
+test('a failed probe offers the Linear MCP, adds it on a yes, and without a terminal names the sign in command', { skip: fakesSkip }, (t) => {
   const b = box(t, { linear: 'none' });
   const r = b.init(withSource(b, { addLinear: { claude: true, codex: false } }));
   assert.equal(r.status, 0, r.stdout);
+  // The test runs init without a terminal, where `claude mcp login` cannot finish, so init adds the
+  // server and leaves the sign in to the person.
   const mcp = b.calls().filter((c) => c.args[0] === 'mcp' && c.args[1] !== 'list').map((c) => `${c.tool} ${c.args.slice(1, 3).join(' ')}`);
-  assert.deepEqual(mcp, ['claude get linear', 'claude add --transport', 'claude login linear']);
-  assert.match(text(r), /A browser window opens for the Linear sign in/);
-  assert.match(text(r), /Checked again: Claude Code read 1 Linear team/);
+  assert.deepEqual(mcp, ['claude get linear', 'claude add --transport']);
+  assert.match(text(r), /Claude Code has the Linear MCP at user scope, but its sign in needs a terminal\. Run `claude mcp login linear` in a terminal, then run `bollplank init` again\./);
+  assert.doesNotMatch(text(r), /A browser window opens for the Linear sign in/);
+  assert.doesNotMatch(text(r), /Checked again/);
   assert.match(text(r), /Left Codex as it is/);
-  assert.deepEqual(r.json.linear.claude.ok, true);
   assert.deepEqual(r.json.linear.codex.ok, false);
 });
 
