@@ -1766,7 +1766,7 @@ test('the Jira evidence needs the whole comment list without gaps, on one cloud 
   assert.equal(coversAll([page(0, 2, 5), page(4, 1, 5)]), false);
   assert.equal(coversAll([page(0, 0, 5, false)]), false);
   assert.equal(coversAll([{ startAt: 0, count: 2, total: null, isLast: false }, { startAt: 2, count: 1, total: null, isLast: true }]), true);
-  const issue = { server: 'atlassian', tool: 'getJiraIssue', args: { cloudId: 'cloud-acme', issueIdOrKey: 'ACM-1' }, ok: true, text: JSON.stringify({ id: '10042', key: 'ACM-1', fields: { comment: { comments: [], startAt: 0, total: 0 } } }) };
+  const issue = { server: 'atlassian', tool: 'getJiraIssue', args: { cloudId: 'cloud-acme', issueIdOrKey: 'ACM-1' }, ok: true, text: JSON.stringify({ id: '10042', key: 'ACM-1', fields: { description: 'Brief v1', comment: { comments: [], startAt: 0, total: 0 } } }) };
   const comments = (args, result) => ({ server: 'atlassian', tool: 'executeRead', args: { tool: 'listJiraIssueComments', arguments: { cloudId: 'cloud-acme', ...args } }, ok: true, text: JSON.stringify({ content: [{ type: 'text', text: JSON.stringify(result) }] }) });
   const empty = comments({ issueIdOrKey: 'ACM-1' }, { startAt: 0, total: 0, isLast: true, comments: [] });
   assert.deepEqual(boardWork([issue, empty], 'ACM-1', 'jira', { cloudId: 'cloud-acme' }), { issue: true, comments: true, posted: false, critique: null });
@@ -1783,6 +1783,23 @@ test('the Jira evidence needs the whole comment list without gaps, on one cloud 
   assert.equal(boardWork([issue, empty, { server: 'atlassian', tool: 'addOrEditJiraIssueComment', args: { issueIdOrKey: 'ACM-1', commentBody: 'Critique of ACM-1\nVerdict: Approve' }, ok: true, text: '{}' }], 'ACM-1', 'jira').posted, false);
 });
 
+test('a Jira issue read counts only when it gave the critic the description', async () => {
+  const { boardWork } = await import('../lib/commands/critic.mjs');
+  const page = { server: 'atlassian', tool: 'executeRead', args: { tool: 'listJiraIssueComments', arguments: { cloudId: 'cloud-acme', issueIdOrKey: 'ACM-1', startAt: 0 } }, ok: true, text: JSON.stringify({ comments: [], startAt: 0, total: 0, isLast: true }) };
+  const read = (args, fields) => ({ server: 'atlassian', tool: 'getJiraIssue', args: { cloudId: 'cloud-acme', issueIdOrKey: 'ACM-1', ...args }, ok: true, text: JSON.stringify({ data: { id: '10042', key: 'ACM-1', fields } }) });
+  const work = (call) => boardWork([call, page], 'ACM-1', 'jira', { cloudId: 'cloud-acme' });
+  // The default view leaves the description out, so that read is not a read of the brief.
+  assert.deepEqual(work(read({}, { summary: 'Brief' })), { issue: false, comments: false, posted: false, critique: null });
+  // A description in the result counts, empty or not.
+  for (const description of ['Brief v1', '', null]) assert.equal(work(read({}, { description })).comments, true, String(description));
+  // The server leaves out an empty description even when asked, so asking for it by key counts.
+  assert.equal(work(read({ fields: ['description'], fieldsByKeys: true }, {})).issue, true);
+  for (const args of [{ fields: ['description'] }, { fields: ['summary'], fieldsByKeys: true }, { fields: 'description', fieldsByKeys: true }]) assert.equal(work(read(args, {})).issue, false, JSON.stringify(args));
+  // A result that is not an issue never stands in for the description, whatever the call asked for.
+  const notIssue = { ...read({ fields: ['description'], fieldsByKeys: true }, {}), text: '{}' };
+  assert.deepEqual(work(notIssue), { issue: false, comments: false, posted: false, critique: null });
+});
+
 test('the Jira event checks allow executeRead only for listJiraIssueComments', () => {
   const only = { tools: ['getJiraIssue', 'executeRead'], inner: { executeRead: ['listJiraIssueComments'] } };
   const item = (tool, args) => ({ type: 'mcp_tool_call', server: 'atlassian', tool, arguments: args });
@@ -1796,7 +1813,22 @@ test('the Jira event checks allow executeRead only for listJiraIssueComments', (
   assert.equal(claude.toolsUsed(use('mcp__atlassian__executeRead', { tool: 'listJiraIssueComments' }), allowed), null);
   assert.match(String(claude.toolsUsed(use('mcp__atlassian__executeRead', { tool: 'getConfluencePage' }), allowed)), /executeRead of getConfluencePage/);
   assert.match(String(claude.toolsUsed(use('mcp__atlassian__addOrEditJiraIssueComment', {}), allowed)), /called the tool/);
-  assert.match(String(claude.toolsUsed({ type: 'system', subtype: 'init', tools: ['mcp__atlassian__getJiraIssue', 'mcp__atlassian__searchConfluence'], mcp_servers: [{ name: 'atlassian' }] }, allowed)), /offered the tools mcp__atlassian__searchConfluence/);
+  // A read tool of the server that is offered but not allowed, as the v2 server's getPeopleInfo was,
+  // does not end the turn, since dontAsk refuses a call to it. Calling it still does. A tool of the
+  // server with any other name, or a verb that is only the start of a word, still ends the turn.
+  const init = (...tools) => ({ type: 'system', subtype: 'init', tools: ['mcp__atlassian__getJiraIssue', 'mcp__atlassian__executeRead', ...tools], mcp_servers: [{ name: 'atlassian' }] });
+  assert.equal(claude.toolsUsed(init('mcp__atlassian__getPeopleInfo', 'mcp__atlassian__search', 'mcp__atlassian__listJiraIssueComments', 'mcp__atlassian__searchConfluence', 'mcp__atlassian__read_page'), allowed), null);
+  assert.match(String(claude.toolsUsed(use('mcp__atlassian__getPeopleInfo', {}), allowed)), /called the tool mcp__atlassian__getPeopleInfo/);
+  assert.match(String(claude.toolsUsed(use('mcp__atlassian__listJiraIssueComments', {}), allowed)), /called the tool/);
+  for (const tool of ['mcp__atlassian__addGraphContext', 'mcp__atlassian__fetchThing', 'mcp__atlassian__settle', 'mcp__atlassian__getaway', 'mcp__acme__getNotes', 'Bash']) assert.match(String(claude.toolsUsed(init(tool), allowed)), new RegExp(`offered the tools ${tool}`), tool);
+  // On Linear every tool of the board server is allowed, so the rule is not needed there.
+  const linear = { ...allowed, tools: null, inner: null, linear: ['linear'] };
+  assert.match(String(claude.toolsUsed({ type: 'system', subtype: 'init', tools: ['mcp__acme__getNotes'], mcp_servers: [{ name: 'linear' }] }, linear)), /offered the tools mcp__acme__getNotes/);
+});
+
+test('the Claude Jira critic denies the v2 server reads by name', () => {
+  for (const tool of ['getCollaborators', 'getGraphContext', 'getGraphObject', 'getLoomObjectsContent', 'getPeopleInfo', 'getWorkActivity', 'getWorkPortfolio', 'search']) assert.ok(claude.JIRA_CRITIC_DENIED.includes(tool), tool);
+  for (const tool of ['getJiraIssue', 'executeRead']) assert.ok(!claude.JIRA_CRITIC_DENIED.includes(tool), tool);
 });
 
 test('a pending Jira round blocks a new call, and confirm counts it only with the right text, subject and round', { skip: fakesSkip }, (t) => {
@@ -2075,7 +2107,7 @@ test('claude: saved settings that allow Atlassian tools beyond the critic\'s two
 
 test('the Jira evidence: site, mixed issue arguments, numeric ids, cloud id case, overlapping pages and startAt', async () => {
   const { boardWork, coversAll } = await import('../lib/commands/critic.mjs');
-  const issue = (args, result = { id: '10042', key: 'ACM-1' }) => ({ server: 'atlassian', tool: 'getJiraIssue', args: { cloudId: 'cloud-acme', issueIdOrKey: 'ACM-1', ...args }, ok: true, text: JSON.stringify(result) });
+  const issue = (args, result = { id: '10042', key: 'ACM-1', fields: { description: 'Brief v1' } }) => ({ server: 'atlassian', tool: 'getJiraIssue', args: { cloudId: 'cloud-acme', issueIdOrKey: 'ACM-1', ...args }, ok: true, text: JSON.stringify(result) });
   const page = (args, result = { startAt: 0, total: 0, isLast: true, comments: [] }) => ({ server: 'atlassian', tool: 'executeRead', args: { tool: 'listJiraIssueComments', arguments: { cloudId: 'cloud-acme', issueIdOrKey: 'ACM-1', ...args } }, ok: true, text: JSON.stringify(result) });
   const work = (calls, ctx = { cloudId: 'cloud-acme' }) => boardWork(calls, 'ACM-1', 'jira', ctx);
   // No configured cloud id: the one seen must be the configured site, as a host or its https link.
@@ -2129,16 +2161,17 @@ test('conflicting inner tool names are refused by both critic event checks', () 
   for (const args of conflicting) assert.match(String(claude.toolsUsed(use(args), allowed)), /executeRead of conflicting inner tool names/);
 });
 
-test('the critique skill stops on a near match of a pending Jira round and confirms only an exact one', () => {
+test('the critique skill stops on a near match of a pending Jira round and confirms only a match under the Jira compare', () => {
   const text = readFileSync(new URL('../skills/bollplank-critique/SKILL.md', import.meta.url), 'utf8');
   assert.match(text, /starts with "Critique of" and names the same subject, and its header has the same `Round: <n>` line and the same `Reviewer:` line/);
   assert.match(text, /If there is one, stop\. Do not post and do not confirm\. Tell the approver/);
-  assert.match(text, /Only an exact match ever confirms a round\./);
+  assert.match(text, /Only a match ever confirms a round\./);
+  assert.match(text, /`bollplank board compare jira --sent <pending\.file> --got <file>`/);
 });
 
 test('the Jira issue aliases are learned only from reads on the target cloud id', async () => {
   const { boardWork } = await import('../lib/commands/critic.mjs');
-  const issue = (cloudId, id) => ({ server: 'atlassian', tool: 'getJiraIssue', args: { cloudId, issueIdOrKey: 'ACME-1' }, ok: true, text: JSON.stringify({ id, key: 'ACME-1' }) });
+  const issue = (cloudId, id) => ({ server: 'atlassian', tool: 'getJiraIssue', args: { cloudId, issueIdOrKey: 'ACME-1' }, ok: true, text: JSON.stringify({ id, key: 'ACME-1', fields: { description: 'Brief v1' } }) });
   const page = (cloudId, ref) => ({ server: 'atlassian', tool: 'executeRead', args: { tool: 'listJiraIssueComments', arguments: { cloudId, issueIdOrKey: ref } }, ok: true, text: JSON.stringify({ startAt: 0, total: 0, isLast: true, comments: [] }) });
   // The id 10042 belongs to ACME-1 on another site, so its comments on the configured cloud are another issue's.
   const calls = [issue('cloud-globex', '10042'), issue('cloud-acme', '10099'), page('cloud-acme', '10042')];

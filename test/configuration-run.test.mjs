@@ -418,6 +418,24 @@ test('a Jira readback uses the issue key, cloud id and numeric project id, and n
   assert.equal(run('init', opts).record.ticket, 'ACM-1');
 });
 
+test('a Jira readback with Jira\'s markdown rewrites matches, and Linear keeps its exact compare', (t) => {
+  const f = fixture(t);
+  f.profile.allowedTickets = ['ACM-1'];
+  f.profile.board = { kind: 'jira', teamId: '00000000-0000-4000-8000-000000000001', projectId: '10001' };
+  const text = readFileSync(f.brief, 'utf8');
+  // As the v2 server returns it: every single newline as a hard break, "* " bullets and an extra
+  // trailing newline.
+  const rewritten = `${text.replace(/\r?\n/g, '  \n').replace(/^- /gm, '* ')}\n\n`;
+  const opts = { brief: f.brief, approval: 'https://example.invalid/approval', instruction: 'synthetic run', review: 'plan', 'board-readback': f.live };
+  const put = (description) => writeFileSync(f.live, JSON.stringify({ id: 'ACM-1', teamId: f.profile.board.teamId, projectId: f.profile.board.projectId, observedAt: new Date().toISOString(), description }));
+  const run = (boardKind) => configurationRun({ project: 'acme-ops', ticket: 'ACM-1', profile: f.profile, cmd: 'init', opts, approver: 'Ada', boardKind });
+  put(rewritten.replace('Brief v1', 'Brief v2'));
+  assert.throws(() => run('jira'), /brief differs from current Jira readback/);
+  put(rewritten);
+  assert.throws(() => run('linear'), /brief differs from current Linear readback/);
+  assert.equal(run('jira').record.ticket, 'ACM-1');
+});
+
 test('a Jira readback with the project id as a string passes, as the board reference writes it', (t) => {
   const f = fixture(t);
   f.profile.allowedTickets = ['ACM_OPS-1'];

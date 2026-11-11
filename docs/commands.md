@@ -105,19 +105,32 @@ For a Jira round, which the critic answers with a reply only. Both look at every
 | `critic-busy` | A critic call for this ticket and critic is running. Confirm again after it. |
 | `state` | The saved critic state cannot be read. |
 
-The critique skill uses both for recovery too. After a lost reply, an interrupted post or an interrupted confirm, it runs `pending`, looks for a comment whose body is exactly the stored text, and confirms with that comment. It posts the text only when no comment has it. The critic never runs again for a pending round.
+The critique skill uses both for recovery too. After a lost reply, an interrupted post or an interrupted confirm, it runs `pending`, looks for a comment whose body matches the stored text under `bollplank board compare jira`, and confirms with that comment. It posts the text only when no comment has it. The critic never runs again for a pending round.
 
 ## The board
 
 ### `bollplank board safe-write`
 
 ```
+bollplank board safe-write jira --html <file>
 bollplank board safe-write jira --adf <file>
 ```
 
-Checks a Jira description before the board skill replaces it. The file holds the description as Jira returns it with `responseContentFormat: "adf"`. Markdown keeps only some ADF types when it is written and read back: the nodes `doc`, `paragraph`, `text`, `heading`, `bulletList`, `orderedList`, `listItem`, `codeBlock`, `rule`, `hardBreak` and `blockquote`, and the marks `strong`, `em`, `code` and `link`. The command lists every other node or mark type in `unsupported`, in the order found, each once. It reads the one file and never touches the network.
+Checks a Jira description before the board skill replaces it with markdown. Give exactly one of the two. It reads the one file and never touches the network.
 
-It exits 0 with `{ "ok": true, "unsupported": [] }` when there are none, also for an empty document, an empty file or a description that is `null`. Failures: `unsupported` (with the types, such as `media`, `mention` or `table`), `not-adf` (the file is not valid JSON, or its root has no `type` of `doc`) and `usage`.
+With `--html` the file holds the description as `getJiraIssue` returns it with `responseContentFormat: "html"`: the whole result, or the description text itself. Atlassian's v2 server returns only markdown or HTML, and HTML keeps everything. The tags markdown keeps are `p`, `br`, `h1` to `h6`, `ul`, `ol`, `li`, `pre`, `code`, `blockquote`, `hr`, `strong`, `em` and `a`, with only `href` on `a`, `class="language-<name>"` on `code`, `data-unique-id` on `pre` and `start` on `ol`. Everything else is listed in `unsupported`, in the order found, each once: an element with a `data-type` by that value, such as `panel-info`, `status` or `mention`, any table tag as `table`, any other tag by its name, any other attribute as `<tag> <attr>`, and an HTML comment as `comment`. A JSON result must say `appliedContentFormat: "html"`, and text with no HTML tag is not HTML. Both fail as `not-html` otherwise. An empty description passes. A result with no description field fails as `no-description`, since it shows nothing about the description: the default view leaves it out, and so does the server for an empty one.
+
+With `--adf` the file holds the description in ADF, for a server that returns it. Markdown keeps only some ADF types when it is written and read back: the nodes `doc`, `paragraph`, `text`, `heading`, `bulletList`, `orderedList`, `listItem`, `codeBlock`, `rule`, `hardBreak` and `blockquote`, and the marks `strong`, `em`, `code` and `link`. The command lists every other node or mark type in `unsupported`, in the order found, each once. It reads the one file and never touches the network.
+
+It exits 0 with `{ "ok": true, "unsupported": [] }` when there are none, also for an empty document, an empty file or a description that is `null`. Failures: `unsupported` (with the types, such as `media`, `mention` or `table`), `not-adf` (the file is not valid JSON, or its root has no `type` of `doc`), `not-html` and `usage`.
+
+### `bollplank board compare`
+
+```
+bollplank board compare jira --sent <file> --got <file>
+```
+
+Checks a Jira readback: what the lead sent against what Jira returned. Jira's markdown returns every single newline as two trailing spaces and a newline, `- ` bullets as `* `, and adds a trailing newline. On both texts, the compare turns line endings into LF, takes trailing spaces and tabs off each line, and takes trailing newlines off. Then each line must be the same, or the sent line starts with `- ` after an indent of fewer than 4 columns and the returned one is the same line with `* ` there. Only that direction, and never inside a fenced code block, where Jira keeps text as it is. Indented code needs 4 columns or more, so no code line matches by the rewrite, and a list nested that deep fails the compare. So a `-` that became a `+` never matches. Nothing else is allowed. It exits 0 with `{ "ok": true }` on a match. Otherwise it fails as `differs` with `line`, the first line that differs counted from 1, and `sent` and `got`, those two lines cut to 200 characters. Consulting and configuration runs on Jira compare the brief with the live description the same way.
 
 ## Tickets and runs
 
