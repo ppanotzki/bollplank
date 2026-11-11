@@ -89,7 +89,7 @@ bollplank critic confirm --ticket <TICKET> --subject brief|plan|code --round <n>
   [--lead claude|codex] [--critic other|same|claude|codex] [--project <name>]
 ```
 
-For a Jira round, which the critic answers with a reply only. Both look at every critic state of the ticket and take the one with a pending round. When more than one critic of the ticket has a round pending, add `--lead` and `--critic`, with `--project`, as in the critic call, to pick the same state that call used.
+For a Jira round, which the critic answers with a reply only. Both look at every critic state of the ticket and take the one with a pending round. A pending round names the site and cloud id of its board, so both need `--project` and refuse a round of another board. When more than one critic of the ticket has a round pending, add `--lead` and `--critic`, with `--project`, as in the critic call, to pick the same state that call used.
 
 - **pending** prints the pending record, `{ subject, round, sha256, file, at }`, and the stored text, after checking that the text still matches its sha256. It fails when it does not. It never starts a client. The text is kept in `~/.bollplank/critics`, in a file named after the critic's state file, `<state file name without .json>.pending-<subject>-<round>.md`, so every ticket, provider and mode has its own.
 - **confirm** runs after the lead posts the text unchanged and reads it back. Pass the `file` that pending printed as `--text-file`, since a copy can gain a trailing newline or other line endings. The sha256 of `--text-file` must equal the pending one, and the subject and round must match, or it fails and nothing changes. On success the round is counted, as a posted round is, and the pending record and its file are cleared. `--comment` is the link of the posted comment.
@@ -98,6 +98,7 @@ For a Jira round, which the critic answers with a reply only. Both look at every
 |---|---|
 | `usage` | A missing or bad option, a text file that cannot be read, or more than one pending round without `--lead` and `--critic`. |
 | `no-pending` | No round of the ticket is pending for that critic. Nothing changed. |
+| `pending-other-board` | The pending round belongs to another board, at another site or cloud id, whose tickets have the same key. Do not post it. |
 | `pending-corrupt` | The stored text is missing or no longer matches its sha256. Do not post it. The failure names the state file as `state`. To run the round again, the approver checks the issue's comments, removes the `pending` key from that file and deletes the text file if it is there. |
 | `confirm-mismatch` | The text, subject or round is not the pending one. Nothing changed. |
 | `critic-busy` | A critic call for this ticket and critic is running. Confirm again after it. |

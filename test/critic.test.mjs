@@ -1609,7 +1609,12 @@ function jiraBox({ teamId = 'cloud-acme', prompt = 'critic.md' } = {}) {
     if (critic) args.push('--critic', critic);
     return s.run(args, { ...env, ...extraEnv });
   };
-  const cmd = (args, extraEnv = {}) => s.run(['critic', ...args], { ...env, ...extraEnv });
+  // pending and confirm name the project as the skill does, unless a test passes its own or none.
+  const cmd = (args, extraEnv = {}) => {
+    const named = args.includes('--project') || args.includes('--no-project');
+    const own = (['pending', 'confirm'].includes(args[0]) && !named ? [...args, '--project', 'acme-portal'] : args).filter((a) => a !== '--no-project');
+    return s.run(['critic', ...own], { ...env, ...extraEnv });
+  };
   const lines = (f) => (existsSync(f) ? readFileSync(f, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
   const reviews = () => lines(capture).filter((c) => c.prompt !== undefined);
   const state = (name) => {
@@ -1895,6 +1900,27 @@ test('a stored text that no longer matches its sha256 makes critic pending fail'
   assert.equal(again.status, 0, again.stdout);
   assert.equal(again.json.round, 1);
   assert.equal(again.json.pending, true);
+});
+
+test('a pending Jira round is handed out only for its own board', { skip: fakesSkip }, (t) => {
+  const b = jiraBox();
+  after(t, b);
+  assert.equal(b.call({ lead: 'claude' }).status, 0);
+  assert.deepEqual(b.state('ACM-1.codex.json').pending.board, { site: 'acme.atlassian.net', cloudId: 'cloud-acme' });
+  // Without a project the board cannot be checked, so nothing is handed out.
+  const bare = b.cmd(['pending', '--ticket', 'ACM-1', '--no-project']);
+  assert.equal(bare.json.failure, 'usage');
+  assert.match(bare.json.detail, /Add --project/);
+  // The same key on another site is another board: pending and confirm both refuse it.
+  const c = JSON.parse(readFileSync(join(b.s.bollplank, 'config.json'), 'utf8'));
+  c.projects['acme-portal'].board = { ...c.projects['acme-portal'].board, team: 'beta.atlassian.net', teamId: 'cloud-beta' };
+  writeFileSync(join(b.s.bollplank, 'config.json'), JSON.stringify(c));
+  const other = b.cmd(['pending', '--ticket', 'ACM-1']);
+  assert.equal(other.json.failure, 'pending-other-board', other.stdout);
+  assert.equal(other.json.text, undefined);
+  const file = b.state('ACM-1.codex.json').pending.file;
+  assert.equal(b.cmd(['confirm', '--ticket', 'ACM-1', '--subject', 'brief', '--round', '1', '--text-file', file, '--comment', 'x']).json.failure, 'pending-other-board');
+  assert.deepEqual(b.state('ACM-1.codex.json').rounds, { brief: 0, plan: 0, code: 0 });
 });
 
 test('two tickets with the same subject and round pending keep separate texts, and confirming one leaves the other', { skip: fakesSkip }, (t) => {
