@@ -224,8 +224,8 @@ test('compare keeps list markers inside code as content', async () => {
   assert.deepEqual(firstDifference('Diff:\n\n```\n- old\n+ new\n```\n', 'Diff:\n\n```\n+ old\n+ new\n```\n'), { line: 4, sent: '- old', got: '+ old' });
   assert.notEqual(firstDifference('Diff:\n\n~~~sh\n* a\n~~~', 'Diff:\n\n~~~sh\n- a\n~~~'), null);
   assert.notEqual(firstDifference('Diff:\n\n    - old\n    + new', 'Diff:\n\n    + old\n    + new'), null);
-  // A list keeps working around code, and a nested item deeper than 4 is still a list item.
-  assert.equal(firstDifference('- a\n    - deep\n\n```\nx\n```\n\n- b', '* a  \n    * deep\n\n```\nx\n```\n\n* b\n'), null);
+  // A list keeps working around code.
+  assert.equal(firstDifference('- a\n  - nested\n\n```\nx\n```\n\n- b', '* a  \n  * nested\n\n```\nx\n```\n\n* b\n'), null);
   // Trailing spaces in a fence are still Jira's to add.
   assert.equal(firstDifference('```\nx\n```', '```  \nx  \n```'), null);
 });
@@ -237,6 +237,12 @@ test('compare allows only "- " coming back as "* ", so no code change hides in i
   assert.notEqual(firstDifference('- item\n\n      - old', '* item\n\n      + old'), null);
   assert.notEqual(firstDifference('+ a', '* a'), null);
   assert.notEqual(firstDifference('* a', '- a'), null);
-  assert.equal(firstDifference('- a\n    - b', '* a  \n    * b\n'), null);
+  assert.equal(firstDifference('- a\n   - b', '* a  \n   * b\n'), null);
+  // Code round 3: an indented code line, at any depth, never matches by the rewrite. A list nested 4
+  // columns deep fails closed.
+  assert.notEqual(firstDifference('Text\n\n    context\n    - old', 'Text\n\n    context\n    * old'), null);
+  assert.notEqual(firstDifference('- item\n\n      - old', '* item\n\n      * old'), null);
+  assert.notEqual(firstDifference('- a\n    - deep', '* a\n    * deep'), null);
+  assert.notEqual(firstDifference('\t- a', '\t* a'), null);
   assert.notEqual(firstDifference('```\n- a\n```', '```\n* a\n```'), null);
 });
