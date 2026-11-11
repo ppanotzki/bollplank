@@ -1906,7 +1906,7 @@ test('a pending Jira round is handed out only for its own board', { skip: fakesS
   const b = jiraBox();
   after(t, b);
   assert.equal(b.call({ lead: 'claude' }).status, 0);
-  assert.deepEqual(b.state('ACM-1.codex.json').pending.board, { site: 'acme.atlassian.net', cloudId: 'cloud-acme' });
+  assert.deepEqual(b.state('ACM-1.codex.json').pending.board, { kind: 'jira', site: 'acme.atlassian.net', cloudId: 'cloud-acme' });
   // Without a project the board cannot be checked, so nothing is handed out.
   const bare = b.cmd(['pending', '--ticket', 'ACM-1', '--no-project']);
   assert.equal(bare.json.failure, 'usage');
@@ -1929,7 +1929,7 @@ test('a confirmed Jira round keeps its board, so another board with the same key
   assert.equal(b.call({ lead: 'claude' }).status, 0);
   const file = b.state('ACM-1.codex.json').pending.file;
   assert.equal(b.cmd(['confirm', '--ticket', 'ACM-1', '--subject', 'brief', '--round', '1', '--text-file', file, '--comment', 'x']).json.counted, true);
-  assert.deepEqual(b.state('ACM-1.codex.json').board, { site: 'acme.atlassian.net', cloudId: 'cloud-acme' });
+  assert.deepEqual(b.state('ACM-1.codex.json').board, { kind: 'jira', site: 'acme.atlassian.net', cloudId: 'cloud-acme' });
   const started = b.reviews().length;
   const c = JSON.parse(readFileSync(join(b.s.bollplank, 'config.json'), 'utf8'));
   c.projects['acme-portal'].board = { ...c.projects['acme-portal'].board, team: 'beta.atlassian.net', teamId: 'cloud-beta' };
@@ -1937,6 +1937,26 @@ test('a confirmed Jira round keeps its board, so another board with the same key
   const r = b.call({ lead: 'claude', subject: 'plan' });
   assert.equal(r.json.failure, 'critic-other-board', r.stdout);
   assert.ok(r.json.state.endsWith('ACM-1.codex.json'));
+  assert.equal(b.reviews().length, started);
+});
+
+test('a session is never resumed between a Jira and a Linear board with the same ticket key', { skip: fakesSkip }, (t) => {
+  const b = jiraBox();
+  after(t, b);
+  // A confirmed Jira round, then a Linear project with the same ticket key.
+  assert.equal(b.call({ lead: 'claude' }).status, 0);
+  const file = b.state('ACM-1.codex.json').pending.file;
+  assert.equal(b.cmd(['confirm', '--ticket', 'ACM-1', '--subject', 'brief', '--round', '1', '--text-file', file, '--comment', 'x']).json.counted, true);
+  assert.deepEqual(b.state('ACM-1.codex.json').board, { kind: 'jira', site: 'acme.atlassian.net', cloudId: 'cloud-acme' });
+  const started = b.reviews().length;
+  const linear = b.call({ lead: 'claude', subject: 'plan', project: 'acme-shop' });
+  assert.equal(linear.json.failure, 'critic-other-board', linear.stdout);
+  assert.match(linear.json.detail, /belongs to the Jira board at acme\.atlassian\.net .* not to a Linear board/);
+  // A state saved before boards were named holds Linear rounds, so a Jira call never resumes it.
+  const old = join(b.s.bollplank, 'critics', 'ACM-2.codex.json');
+  writeFileSync(old, JSON.stringify({ sessionId: 'linear-session', rounds: { brief: 1, plan: 0, code: 0 } }));
+  const jira = b.call({ lead: 'claude', ticket: 'ACM-2', subject: 'plan' });
+  assert.equal(jira.json.failure, 'critic-other-board', jira.stdout);
   assert.equal(b.reviews().length, started);
 });
 
